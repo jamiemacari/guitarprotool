@@ -273,6 +273,56 @@ class TestGPFileContextManager:
         assert not temp_dir.exists()
 
 
+class TestGPFileContentGpifPath:
+    """Test GP files with score.gpif inside Content/ folder."""
+
+    def test_extract_content_gpif(self, sample_gp_file_content_gpif):
+        """Test extracting a GP file with score.gpif in Content/ folder."""
+        gp = GPFile(sample_gp_file_content_gpif)
+        extract_dir = gp.extract()
+
+        assert extract_dir.exists()
+        assert gp.is_extracted
+        assert (extract_dir / "Content" / "score.gpif").exists()
+
+        gp.cleanup()
+
+    def test_validate_structure_content_gpif(self, sample_gp_file_content_gpif):
+        """Test validation passes for Content/score.gpif structure."""
+        gp = GPFile(sample_gp_file_content_gpif)
+        gp.extract()
+
+        assert gp.validate_structure() is True
+
+        gp.cleanup()
+
+    def test_get_gpif_path_content_gpif(self, sample_gp_file_content_gpif):
+        """Test get_gpif_path returns Content/score.gpif when that's the location."""
+        gp = GPFile(sample_gp_file_content_gpif)
+        gp.extract()
+
+        gpif_path = gp.get_gpif_path()
+        assert gpif_path.exists()
+        assert gpif_path.name == "score.gpif"
+        assert gpif_path.parent.name == "Content"
+
+        gp.cleanup()
+
+    def test_repackage_content_gpif(self, sample_gp_file_content_gpif, temp_dir):
+        """Test repackaging preserves Content/score.gpif structure."""
+        gp = GPFile(sample_gp_file_content_gpif)
+        gp.extract()
+
+        output_path = temp_dir / "repackaged_content.gp"
+        result_path = gp.repackage(output_path)
+
+        # Verify structure is preserved
+        with zipfile.ZipFile(result_path, "r") as zf:
+            assert "Content/score.gpif" in zf.namelist()
+
+        gp.cleanup()
+
+
 class TestGPFileIntegration:
     """Integration tests for complete workflows."""
 
