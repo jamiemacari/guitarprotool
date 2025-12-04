@@ -1,0 +1,200 @@
+"""Tests for CLI module."""
+
+import sys
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+import pytest
+
+# Mock pydub/audioop before importing CLI
+sys.modules["pydub"] = MagicMock()
+sys.modules["pydub.AudioSegment"] = MagicMock()
+
+# Mock aubio
+mock_aubio = MagicMock()
+sys.modules["aubio"] = mock_aubio
+
+# ruff: noqa: E402
+from guitarprotool.cli.main import (
+    print_banner,
+    get_track_name,
+    confirm_overwrite,
+    display_beat_info,
+    main,
+)
+from guitarprotool.core.beat_detector import BeatInfo
+
+
+class TestPrintBanner:
+    """Test banner display."""
+
+    def test_print_banner_runs(self, capsys):
+        """Test that print_banner executes without error."""
+        # Should not raise
+        print_banner()
+
+        # Should have printed something
+        captured = capsys.readouterr()
+        # The output goes through rich console, might not show in capsys
+        # Just verify no exception occurred
+
+
+class TestGetTrackName:
+    """Test track name prompt."""
+
+    @patch("guitarprotool.cli.main.questionary")
+    def test_get_track_name_default(self, mock_questionary):
+        """Test default track name."""
+        mock_questionary.text.return_value.ask.return_value = None
+
+        result = get_track_name()
+
+        assert result == "Audio Track"
+
+    @patch("guitarprotool.cli.main.questionary")
+    def test_get_track_name_custom(self, mock_questionary):
+        """Test custom track name."""
+        mock_questionary.text.return_value.ask.return_value = "My Song"
+
+        result = get_track_name()
+
+        assert result == "My Song"
+
+    @patch("guitarprotool.cli.main.questionary")
+    def test_get_track_name_custom_default(self, mock_questionary):
+        """Test custom default track name."""
+        mock_questionary.text.return_value.ask.return_value = None
+
+        result = get_track_name(default="Custom Default")
+
+        assert result == "Custom Default"
+
+
+class TestConfirmOverwrite:
+    """Test overwrite confirmation."""
+
+    def test_confirm_overwrite_nonexistent(self, temp_dir):
+        """Test confirming overwrite of nonexistent file."""
+        nonexistent = temp_dir / "does_not_exist.gp"
+
+        result = confirm_overwrite(nonexistent)
+
+        assert result is True
+
+    @patch("guitarprotool.cli.main.questionary")
+    def test_confirm_overwrite_exists_yes(self, mock_questionary, temp_dir):
+        """Test confirming overwrite when file exists and user says yes."""
+        existing = temp_dir / "exists.gp"
+        existing.write_text("test")
+
+        mock_questionary.confirm.return_value.ask.return_value = True
+
+        result = confirm_overwrite(existing)
+
+        assert result is True
+
+    @patch("guitarprotool.cli.main.questionary")
+    def test_confirm_overwrite_exists_no(self, mock_questionary, temp_dir):
+        """Test confirming overwrite when file exists and user says no."""
+        existing = temp_dir / "exists.gp"
+        existing.write_text("test")
+
+        mock_questionary.confirm.return_value.ask.return_value = False
+
+        result = confirm_overwrite(existing)
+
+        assert result is False
+
+
+class TestDisplayBeatInfo:
+    """Test beat info display."""
+
+    def test_display_beat_info(self, capsys):
+        """Test displaying beat info."""
+        beat_info = BeatInfo(
+            bpm=120.0,
+            beat_times=[0.0, 0.5, 1.0, 1.5, 2.0],
+            confidence=0.95,
+        )
+
+        # Should not raise
+        display_beat_info(beat_info)
+
+
+class TestMain:
+    """Test main entry point."""
+
+    @patch("guitarprotool.cli.main.main_menu")
+    @patch("guitarprotool.cli.main.print_banner")
+    def test_main_calls_menu(self, mock_banner, mock_menu):
+        """Test that main calls banner and menu."""
+        main()
+
+        mock_banner.assert_called_once()
+        mock_menu.assert_called_once()
+
+    @patch("guitarprotool.cli.main.main_menu")
+    @patch("guitarprotool.cli.main.print_banner")
+    def test_main_handles_keyboard_interrupt(self, mock_banner, mock_menu):
+        """Test that main handles KeyboardInterrupt gracefully."""
+        mock_menu.side_effect = KeyboardInterrupt()
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 1
+
+
+class TestIntegration:
+    """Integration tests for CLI components."""
+
+    @patch("guitarprotool.cli.main.questionary")
+    def test_get_gp_file_path_cancelled(self, mock_questionary):
+        """Test file path selection when cancelled."""
+        mock_questionary.path.return_value.ask.return_value = None
+
+        from guitarprotool.cli.main import get_gp_file_path
+
+        result = get_gp_file_path()
+
+        assert result is None
+
+    @patch("guitarprotool.cli.main.questionary")
+    def test_get_audio_source_youtube(self, mock_questionary):
+        """Test audio source selection for YouTube."""
+        mock_questionary.select.return_value.ask.return_value = "youtube"
+        mock_questionary.text.return_value.ask.return_value = "https://youtube.com/watch?v=test"
+
+        from guitarprotool.cli.main import get_audio_source
+
+        source_type, source_value = get_audio_source()
+
+        assert source_type == "youtube"
+        assert source_value == "https://youtube.com/watch?v=test"
+
+    @patch("guitarprotool.cli.main.questionary")
+    def test_get_audio_source_local(self, mock_questionary):
+        """Test audio source selection for local file."""
+        mock_questionary.select.return_value.ask.return_value = "local"
+        mock_questionary.path.return_value.ask.return_value = "/path/to/audio.mp3"
+
+        from guitarprotool.cli.main import get_audio_source
+
+        source_type, source_value = get_audio_source()
+
+        assert source_type == "local"
+        assert source_value == "/path/to/audio.mp3"
+
+
+class TestDetectBPMOnly:
+    """Test standalone BPM detection mode."""
+
+    @patch("guitarprotool.cli.main.questionary")
+    def test_detect_bpm_only_cancelled(self, mock_questionary):
+        """Test BPM detection when cancelled."""
+        mock_questionary.path.return_value.ask.return_value = None
+
+        from guitarprotool.cli.main import detect_bpm_only
+
+        # Should not raise
+        detect_bpm_only()
