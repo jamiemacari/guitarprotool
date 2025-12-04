@@ -12,13 +12,15 @@ Before working with this codebase, ensure these system dependencies are installe
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt-get install ffmpeg libaubio-dev aubio-tools
+sudo apt-get install ffmpeg
 ```
 
 **macOS:**
 ```bash
-brew install ffmpeg aubio
+brew install ffmpeg
 ```
+
+**Python Version**: Use Python 3.11 or 3.12 for best compatibility. Python 3.13+ has issues with pydub's audioop dependency.
 
 ## Development Commands
 
@@ -81,7 +83,7 @@ The tool operates as a linear pipeline with 5 distinct phases:
 
 1. **Extract** (`GPFile.extract()`) - Treats .gp file as ZIP archive, extracts to temp directory
 2. **Download/Convert** (`AudioProcessor`) - Downloads YouTube audio, converts to MP3 192kbps
-3. **Detect** (`BeatDetector`) - Analyzes audio for BPM and beat positions using aubio
+3. **Detect** (`BeatDetector`) - Analyzes audio for BPM and beat positions using librosa
 4. **Inject** (`XMLModifier`) - Modifies score.gpif XML to add AudioTrack element with sync points
 5. **Repackage** (`GPFile.repackage()`) - Creates new .gp file with audio and metadata
 
@@ -90,12 +92,15 @@ The tool operates as a linear pipeline with 5 distinct phases:
 **Critical**: Guitar Pro 8 .gp files are ZIP archives with this structure:
 ```
 mysong.gp (ZIP file)
-├── score.gpif          # Main XML file with tab data, tempo, measures
+├── score.gpif          # Main XML file (may also be at Content/score.gpif)
 ├── Content/
+│   ├── score.gpif      # Alternate location for main XML (some GP8 exports)
 │   └── Audio/          # Audio tracks (created if missing)
 │       └── *.mp3       # Audio files referenced in XML
 └── [other metadata]
 ```
+
+**Note**: Some GP8 files have `score.gpif` at the root level, others have it inside `Content/`. The `GPFile` class handles both locations automatically.
 
 The `score.gpif` XML file contains all tab data. To add audio:
 - Copy MP3 to `Content/Audio/`
@@ -118,17 +123,17 @@ The `score.gpif` XML file contains all tab data. To add audio:
 - **Target format**: MP3, 192kbps, 44.1kHz sample rate
 
 **`core/beat_detector.py`** ✅ IMPLEMENTED
-- Uses aubio for beat detection (optional dependency)
-- Returns median BPM for robustness against tempo variations
+- Uses librosa for beat detection (replaced aubio due to Python 3.12+ compatibility issues)
+- Returns BPM using librosa.beat.beat_track()
 - Creates sync points every 16 beats to handle BPM drift
-- Graceful fallback when aubio not available (raises clear error)
+- Graceful fallback when librosa not available (raises clear error)
 
 **`core/xml_modifier.py`** ✅ IMPLEMENTED
 - Uses lxml for faster parsing and better XPath support
 - Preserves original XML formatting (indentation, spacing)
 - Complete documentation in `docs/GP8_FORMAT.md`
 
-**`cli/main.py`** *(to be implemented)*
+**`cli/main.py`** ✅ IMPLEMENTED
 - Interactive menu using questionary for prompts
 - Progress feedback using rich library (progress bars, panels, spinners)
 - Orchestrates the 5-phase pipeline
@@ -164,14 +169,15 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 
 ## Testing Philosophy
 
-**Unit tests**: Each core module in isolation, mock external dependencies (yt-dlp, ffmpeg, aubio)
+**Unit tests**: Each core module in isolation, mock external dependencies (yt-dlp, ffmpeg, librosa)
 
 **Integration tests**: End-to-end workflow with sample .gp files
 - Extract → Modify → Repackage → Verify file still opens in GP8
 - Full pipeline: Download audio → Detect BPM → Inject → Verify audio plays in GP8
 
 **Test fixtures** (`tests/conftest.py`):
-- `sample_gp_file`: Minimal valid .gp with basic score.gpif
+- `sample_gp_file`: Minimal valid .gp with basic score.gpif at root
+- `sample_gp_file_content_gpif`: .gp with score.gpif inside Content/ folder
 - `sample_gp_with_audio`: .gp file with existing Audio directory
 - `invalid_zip_file`: Not a ZIP archive (tests error handling)
 - `corrupted_gp_file`: Missing score.gpif (tests validation)
@@ -203,11 +209,11 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 - Tests: `tests/test_xml_modifier.py`
 
 **Phase 4: Beat Detection** ✅ COMPLETE
-- ✅ BeatDetector class implemented with aubio
-- ✅ BPM detection using median for robustness against tempo drift
+- ✅ BeatDetector class implemented with librosa (replaced aubio for Python 3.12+ compatibility)
+- ✅ BPM detection using librosa.beat.beat_track()
 - ✅ Beat position detection with progress callback support
 - ✅ Sync point generation (bar, frame_offset, modified_tempo, original_tempo)
-- ✅ Comprehensive test suite (40 test cases)
+- ✅ Test suite (tests need updating for librosa mocks)
 - Location: `src/guitarprotool/core/beat_detector.py`
 - Tests: `tests/test_beat_detector.py`
 
@@ -251,8 +257,8 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 - Location: `src/guitarprotool/core/xml_modifier.py`
 
 ### BeatDetector (Implemented):
-- ✅ Uses `aubio.tempo("default", win_s=1024, hop_s=512, sample_rate)`
-- ✅ Returns **median** BPM from all detected values (more robust than mean)
+- ✅ Uses `librosa.beat.beat_track(y, sr, hop_length)` for beat detection
+- ✅ Returns BPM and beat frame positions
 - ✅ `BeatDetector.analyze()` - Full analysis returning BeatInfo (bpm, beat_times, confidence)
 - ✅ `BeatDetector.detect_bpm()` - BPM-only detection
 - ✅ `BeatDetector.generate_sync_points()` - Creates SyncPointData list for XML injection
@@ -260,7 +266,7 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 - ✅ Local tempo calculation for each sync point (handles tempo drift)
 - Data classes: `BeatInfo`, `SyncPointData`
 - Location: `src/guitarprotool/core/beat_detector.py`
-- Tests: `tests/test_beat_detector.py` (40 test cases)
+- Tests: `tests/test_beat_detector.py` (tests need updating for librosa)
 
 ### CLI (Implemented):
 - ✅ Uses `questionary.path()` for file selection with validation
@@ -277,3 +283,18 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 The `__main__.py` calls `cli.main.main()` which displays the interactive menu. Entry point registered in `pyproject.toml` as `guitarprotool = "guitarprotool.__main__:main"`.
 
 Run with: `python -m guitarprotool` or `guitarprotool` (if installed)
+
+## Known Issues & Next Steps
+
+### Test Suite
+- `tests/test_beat_detector.py` needs updating to mock librosa instead of aubio
+- `tests/test_audio_processor.py` may have pydub/audioop issues on Python 3.13+
+
+### Python Compatibility
+- **Recommended**: Python 3.11 or 3.12
+- Python 3.13+: pydub has issues with removed `audioop` module (can use `audioop-lts` package as workaround)
+- Python 3.14: Not yet supported
+
+### Dependencies Changed
+- Replaced `aubio` with `librosa` for beat detection (better Python/NumPy compatibility)
+- `librosa` is larger but more actively maintained
