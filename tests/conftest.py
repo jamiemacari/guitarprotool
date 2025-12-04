@@ -88,3 +88,30 @@ def corrupted_gp_file(temp_dir):
         # Missing score.gpif!
 
     return gp_path
+
+
+@pytest.fixture
+def sample_gp_file_content_gpif(temp_dir):
+    """Create a .gp file with score.gpif inside Content/ folder.
+
+    This mirrors the structure found in some real GP8 files where
+    score.gpif is located at Content/score.gpif instead of root.
+    """
+    gp_path = temp_dir / "test_content_gpif.gp"
+
+    gpif_content = '''<?xml version="1.0" encoding="UTF-8"?>
+<GPIF>
+    <GPVersion>8.0</GPVersion>
+    <Score>
+        <Title>Test Song Content Path</Title>
+        <Artist>Test Artist</Artist>
+    </Score>
+</GPIF>'''
+
+    with zipfile.ZipFile(gp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # score.gpif inside Content/ folder
+        zf.writestr("Content/score.gpif", gpif_content)
+        zf.writestr("Content/BinaryStylesheet", "")
+        zf.writestr("VERSION", "8.0")
+
+    return gp_path

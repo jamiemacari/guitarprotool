@@ -126,6 +126,11 @@ class GPFile:
 
         except zipfile.BadZipFile as e:
             raise InvalidGPFileError(f"Corrupted ZIP file: {self.filepath}") from e
+        except (InvalidGPFileError, GPFileCorruptedError):
+            # Re-raise our specific exceptions without wrapping
+            if self.temp_dir and self.temp_dir.exists():
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+            raise
         except Exception as e:
             if self.temp_dir and self.temp_dir.exists():
                 shutil.rmtree(self.temp_dir, ignore_errors=True)
@@ -137,14 +142,14 @@ class GPFile:
         Returns:
             True if structure is valid, False otherwise
         """
-        if not self.is_extracted or not self.temp_dir:
+        if not self.temp_dir or not self.temp_dir.exists():
             logger.warning("Cannot validate: file not extracted")
             return False
 
-        # Check for required score.gpif file
-        gpif_path = self.temp_dir / "score.gpif"
-        if not gpif_path.exists():
-            logger.error(f"Missing required file: score.gpif")
+        # Check for required score.gpif file (can be at root or in Content/)
+        gpif_path = self._find_gpif_path()
+        if gpif_path is None:
+            logger.error("Missing required file: score.gpif")
             return False
 
         # Content directory should exist (may be empty)
@@ -154,6 +159,29 @@ class GPFile:
 
         logger.debug("GP file structure validation passed")
         return True
+
+    def _find_gpif_path(self) -> Optional[Path]:
+        """Find the score.gpif file in the extracted directory.
+
+        GP8 files may have score.gpif at root level or inside Content/ folder.
+
+        Returns:
+            Path to score.gpif if found, None otherwise
+        """
+        if not self.temp_dir:
+            return None
+
+        # Check root level first (original expected location)
+        root_path = self.temp_dir / "score.gpif"
+        if root_path.exists():
+            return root_path
+
+        # Check Content/ folder (alternate location found in some GP8 files)
+        content_path = self.temp_dir / "Content" / "score.gpif"
+        if content_path.exists():
+            return content_path
+
+        return None
 
     def get_gpif_path(self) -> Path:
         """Get path to the score.gpif XML file.
@@ -167,8 +195,8 @@ class GPFile:
         if not self.is_extracted or not self.temp_dir:
             raise GPFileCorruptedError("File not extracted. Call extract() first.")
 
-        gpif_path = self.temp_dir / "score.gpif"
-        if not gpif_path.exists():
+        gpif_path = self._find_gpif_path()
+        if gpif_path is None:
             raise GPFileCorruptedError("score.gpif not found in extracted files")
 
         return gpif_path

@@ -112,22 +112,21 @@ The `score.gpif` XML file contains all tab data. To add audio:
 - Context manager support for automatic cleanup
 - **Key methods**: `extract()`, `get_gpif_path()`, `get_audio_dir()`, `repackage()`
 
-**`core/audio_processor.py`** *(to be implemented)*
+**`core/audio_processor.py`** ✅ IMPLEMENTED
 - Downloads audio via yt-dlp with automatic MP3 conversion
 - Uses pydub for metadata extraction and optional normalization
 - **Target format**: MP3, 192kbps, 44.1kHz sample rate
 
-**`core/beat_detector.py`** *(to be implemented)*
-- Uses aubio (NOT librosa - aubio is 20x lighter) for beat detection
+**`core/beat_detector.py`** ✅ IMPLEMENTED
+- Uses aubio for beat detection (optional dependency)
 - Returns median BPM for robustness against tempo variations
 - Creates sync points every 16 beats to handle BPM drift
-- **Fallback**: If aubio accuracy insufficient, switch to madmom library
+- Graceful fallback when aubio not available (raises clear error)
 
-**`core/xml_modifier.py`** *(to be implemented)*
-- Uses lxml (NOT ElementTree) for faster parsing and better XPath support
-- Must preserve original XML formatting (indentation, spacing) to avoid corruption
-- Must handle XML namespaces properly
-- **Critical**: Document all findings about GP8 XML structure in `docs/GP8_FORMAT.md`
+**`core/xml_modifier.py`** ✅ IMPLEMENTED
+- Uses lxml for faster parsing and better XPath support
+- Preserves original XML formatting (indentation, spacing)
+- Complete documentation in `docs/GP8_FORMAT.md`
 
 **`cli/main.py`** *(to be implemented)*
 - Interactive menu using questionary for prompts
@@ -203,16 +202,25 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 - Location: `src/guitarprotool/core/xml_modifier.py`
 - Tests: `tests/test_xml_modifier.py`
 
-**Phase 4: Beat Detection** - READY
-- Implement BeatDetector with aubio
-- Detect BPM and beat positions from audio
-- Generate sync point data (BarIndex, FrameOffset, ModifiedTempo)
-- Validate against known BPM audio files
+**Phase 4: Beat Detection** ✅ COMPLETE
+- ✅ BeatDetector class implemented with aubio
+- ✅ BPM detection using median for robustness against tempo drift
+- ✅ Beat position detection with progress callback support
+- ✅ Sync point generation (bar, frame_offset, modified_tempo, original_tempo)
+- ✅ Comprehensive test suite (40 test cases)
+- Location: `src/guitarprotool/core/beat_detector.py`
+- Tests: `tests/test_beat_detector.py`
 
-**Phase 5: CLI Interface**
-- Build interactive menu with questionary
-- Add rich progress bars and formatting
-- Wire up complete pipeline (Audio → Beat Detection → XML Injection → Repackage)
+**Phase 5: CLI Interface** ✅ COMPLETE
+- ✅ Interactive menu with questionary (main menu, file selection, audio source)
+- ✅ Rich progress bars and formatting (spinners, progress bars, panels, tables)
+- ✅ Full pipeline wired: Extract → Audio Processing → Beat Detection → XML Injection → Repackage
+- ✅ Standalone BPM detection mode
+- ✅ User-friendly error handling and progress feedback
+- ✅ Test suite (14 test cases)
+- Location: `src/guitarprotool/cli/main.py`
+- Entry point: `src/guitarprotool/__main__.py`
+- Tests: `tests/test_cli.py`
 
 **Phase 6: Integration Testing**
 - End-to-end tests with real .gp files
@@ -242,17 +250,30 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 - Data classes: `SyncPoint`, `AssetInfo`, `BackingTrackConfig`
 - Location: `src/guitarprotool/core/xml_modifier.py`
 
-### When implementing BeatDetector:
-- Use `aubio.tempo("default", win_s=1024, hop_s=512, sample_rate)`
-- Return **median** BPM from all detected values (more robust than mean)
-- Handle songs with no clear beat (ambient, classical) - allow manual BPM input
-- Sync point calculation: `gp_beat_position = start_beat + (i * 16)` for every 16th beat
+### BeatDetector (Implemented):
+- ✅ Uses `aubio.tempo("default", win_s=1024, hop_s=512, sample_rate)`
+- ✅ Returns **median** BPM from all detected values (more robust than mean)
+- ✅ `BeatDetector.analyze()` - Full analysis returning BeatInfo (bpm, beat_times, confidence)
+- ✅ `BeatDetector.detect_bpm()` - BPM-only detection
+- ✅ `BeatDetector.generate_sync_points()` - Creates SyncPointData list for XML injection
+- ✅ Configurable sync interval (default 16 beats), beats per bar, and start offset
+- ✅ Local tempo calculation for each sync point (handles tempo drift)
+- Data classes: `BeatInfo`, `SyncPointData`
+- Location: `src/guitarprotool/core/beat_detector.py`
+- Tests: `tests/test_beat_detector.py` (40 test cases)
 
-### When implementing CLI:
-- Use `questionary.path()` for file selection with validation
-- Use `rich.progress.Progress()` with SpinnerColumn and TextColumn
-- Wrap each pipeline phase in try/except, show user-friendly errors via rich.console
-- Log detailed errors to file, show simplified messages on console
+### CLI (Implemented):
+- ✅ Uses `questionary.path()` for file selection with validation
+- ✅ Uses `rich.progress.Progress()` with SpinnerColumn, BarColumn, TaskProgressColumn
+- ✅ Pipeline phases wrapped in try/except with user-friendly errors via rich.console
+- ✅ Main menu: "Inject audio into GP file", "Detect BPM from audio file", "Exit"
+- ✅ Step-by-step workflow with progress feedback
+- ✅ Manual BPM override option after detection
+- ✅ Handles Python 3.14 pydub/audioop compatibility gracefully
+- Location: `src/guitarprotool/cli/main.py`
+- Tests: `tests/test_cli.py` (14 test cases)
 
 ## Entry Point
-When `__main__.py` is implemented, it should call `cli.main.main()` which displays the interactive menu. The entry point is registered in `pyproject.toml` as `guitarprotool = "guitarprotool.__main__:main"`.
+The `__main__.py` calls `cli.main.main()` which displays the interactive menu. Entry point registered in `pyproject.toml` as `guitarprotool = "guitarprotool.__main__:main"`.
+
+Run with: `python -m guitarprotool` or `guitarprotool` (if installed)
