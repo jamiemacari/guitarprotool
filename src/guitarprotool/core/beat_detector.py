@@ -1,7 +1,7 @@
 """Beat detection module for Guitar Pro audio synchronization.
 
 This module handles:
-- Loading and analyzing audio files using aubio
+- Loading and analyzing audio files using librosa
 - Detecting BPM (tempo) from audio
 - Finding beat positions throughout the track
 - Generating sync points for GP8 XML injection
@@ -17,17 +17,17 @@ from loguru import logger
 
 from guitarprotool.utils.exceptions import BeatDetectionError, BPMDetectionError
 
-# Try to import aubio, but allow running without it for testing
+# Try to import librosa, but allow running without it for testing
 try:
-    import aubio
+    import librosa
 
-    AUBIO_AVAILABLE = True
+    LIBROSA_AVAILABLE = True
 except ImportError:
-    aubio = None  # type: ignore
-    AUBIO_AVAILABLE = False
+    librosa = None  # type: ignore
+    LIBROSA_AVAILABLE = False
     logger.warning(
-        "aubio not available. Beat detection will not work. "
-        "Install aubio with: pip install aubio"
+        "librosa not available. Beat detection will not work. "
+        "Install librosa with: pip install librosa"
     )
 
 
@@ -70,10 +70,10 @@ ProgressCallback = Callable[[float, str], None]
 
 
 class BeatDetector:
-    """Detects BPM and beat positions in audio files using aubio.
+    """Detects BPM and beat positions in audio files using librosa.
 
-    aubio is chosen over librosa for its lightweight footprint (20x smaller)
-    while providing accurate beat detection for music files.
+    librosa provides accurate beat detection for music files with
+    excellent Python compatibility.
 
     Example:
         >>> detector = BeatDetector()
@@ -83,32 +83,27 @@ class BeatDetector:
 
     Attributes:
         sample_rate: Audio sample rate (default 44100 Hz)
-        win_s: Analysis window size in samples
-        hop_s: Hop size between windows in samples
+        hop_length: Hop size between analysis frames in samples
     """
 
     DEFAULT_SAMPLE_RATE = 44100
-    DEFAULT_WIN_S = 1024
-    DEFAULT_HOP_S = 512
+    DEFAULT_HOP_LENGTH = 512
 
     def __init__(
         self,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
-        win_s: int = DEFAULT_WIN_S,
-        hop_s: int = DEFAULT_HOP_S,
+        hop_length: int = DEFAULT_HOP_LENGTH,
     ):
         """Initialize BeatDetector.
 
         Args:
             sample_rate: Audio sample rate in Hz
-            win_s: Analysis window size in samples
-            hop_s: Hop size between analysis windows
+            hop_length: Hop size between analysis frames
         """
         self.sample_rate = sample_rate
-        self.win_s = win_s
-        self.hop_s = hop_s
+        self.hop_length = hop_length
 
-        logger.debug(f"BeatDetector initialized: sr={sample_rate}, win={win_s}, hop={hop_s}")
+        logger.debug(f"BeatDetector initialized: sr={sample_rate}, hop={hop_length}")
 
     def analyze(
         self,
@@ -135,8 +130,10 @@ class BeatDetector:
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        if not AUBIO_AVAILABLE:
-            raise BeatDetectionError("aubio library not available. Install with: pip install aubio")
+        if not LIBROSA_AVAILABLE:
+            raise BeatDetectionError(
+                "librosa library not available. Install with: pip install librosa"
+            )
 
         logger.info(f"Analyzing audio: {audio_path}")
 
@@ -144,25 +141,41 @@ class BeatDetector:
             progress_callback(0.0, "Loading audio file...")
 
         try:
-            # Get audio duration for progress tracking
-            duration = self._get_audio_duration(audio_path)
+            # Load audio file
+            if progress_callback:
+                progress_callback(0.1, "Loading audio...")
+            y, sr = librosa.load(str(audio_path), sr=self.sample_rate, mono=True)
+
+            duration = len(y) / sr
             logger.debug(f"Audio duration: {duration:.2f}s")
 
-            # Detect BPM
+            # Detect BPM and beats
             if progress_callback:
-                progress_callback(0.1, "Detecting tempo...")
-            bpm, bpm_confidence = self._detect_bpm(audio_path)
+                progress_callback(0.3, "Detecting tempo and beats...")
 
-            # Detect beat positions
+            tempo, beat_frames = librosa.beat.beat_track(
+                y=y, sr=sr, hop_length=self.hop_length
+            )
+
+            # Convert tempo to float (librosa may return array)
+            if isinstance(tempo, np.ndarray):
+                bpm = float(tempo[0]) if len(tempo) > 0 else float(tempo)
+            else:
+                bpm = float(tempo)
+
+            if bpm <= 0:
+                raise BPMDetectionError("No BPM detected. Audio may not have a clear beat.")
+
+            # Convert beat frames to times
+            beat_times = librosa.frames_to_time(
+                beat_frames, sr=sr, hop_length=self.hop_length
+            ).tolist()
+
             if progress_callback:
-                progress_callback(0.3, "Finding beat positions...")
-            beat_times = self._detect_beats(audio_path, progress_callback)
+                progress_callback(0.7, "Calculating confidence...")
 
-            # Calculate overall confidence
-            beat_consistency = self._calculate_beat_consistency(beat_times, bpm)
-
-            # Combine confidence measures
-            confidence = (bpm_confidence + beat_consistency) / 2
+            # Calculate confidence based on beat regularity
+            confidence = self._calculate_beat_consistency(beat_times, bpm)
 
             if progress_callback:
                 progress_callback(1.0, "Analysis complete")
@@ -188,7 +201,7 @@ class BeatDetector:
             audio_path: Path to the audio file
 
         Returns:
-            Detected BPM (median value)
+            Detected BPM
 
         Raises:
             FileNotFoundError: If audio file doesn't exist
@@ -199,11 +212,30 @@ class BeatDetector:
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        if not AUBIO_AVAILABLE:
-            raise BPMDetectionError("aubio library not available. Install with: pip install aubio")
+        if not LIBROSA_AVAILABLE:
+            raise BPMDetectionError(
+                "librosa library not available. Install with: pip install librosa"
+            )
 
-        bpm, _ = self._detect_bpm(audio_path)
-        return bpm
+        try:
+            y, sr = librosa.load(str(audio_path), sr=self.sample_rate, mono=True)
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr, hop_length=self.hop_length)
+
+            # Convert tempo to float (librosa may return array)
+            if isinstance(tempo, np.ndarray):
+                bpm = float(tempo[0]) if len(tempo) > 0 else float(tempo)
+            else:
+                bpm = float(tempo)
+
+            if bpm <= 0:
+                raise BPMDetectionError("No BPM detected. Audio may not have a clear beat.")
+
+            return bpm
+
+        except BPMDetectionError:
+            raise
+        except Exception as e:
+            raise BPMDetectionError(f"BPM detection failed: {e}") from e
 
     def generate_sync_points(
         self,
@@ -302,133 +334,6 @@ class BeatDetector:
 
         logger.success(f"Generated {len(sync_points)} sync points")
         return sync_points
-
-    def _detect_bpm(self, audio_path: Path) -> tuple[float, float]:
-        """Detect BPM using aubio tempo detection.
-
-        Returns median BPM for robustness against tempo variations.
-
-        Args:
-            audio_path: Path to audio file
-
-        Returns:
-            Tuple of (median_bpm, confidence)
-
-        Raises:
-            BPMDetectionError: If BPM cannot be detected
-        """
-        try:
-            # Create aubio source and tempo detector
-            source = aubio.source(str(audio_path), self.sample_rate, self.hop_s)
-            tempo = aubio.tempo("default", self.win_s, self.hop_s, self.sample_rate)
-
-            bpm_values: List[float] = []
-
-            # Process audio in chunks
-            while True:
-                samples, read = source()
-                is_beat = tempo(samples)
-
-                if is_beat:
-                    current_bpm = tempo.get_bpm()
-                    if current_bpm > 0:
-                        bpm_values.append(current_bpm)
-
-                if read < self.hop_s:
-                    break
-
-            if not bpm_values:
-                raise BPMDetectionError("No BPM detected. Audio may not have a clear beat.")
-
-            # Use median for robustness
-            median_bpm = median(bpm_values)
-
-            # Calculate confidence based on consistency
-            if len(bpm_values) > 1:
-                bpm_array = np.array(bpm_values)
-                std_dev = np.std(bpm_array)
-                # Lower std dev = higher confidence
-                confidence = max(0.0, min(1.0, 1.0 - (std_dev / median_bpm)))
-            else:
-                confidence = 0.5
-
-            logger.debug(
-                f"BPM detection: median={median_bpm:.1f}, "
-                f"samples={len(bpm_values)}, confidence={confidence:.2f}"
-            )
-
-            return median_bpm, confidence
-
-        except BPMDetectionError:
-            raise
-        except Exception as e:
-            raise BPMDetectionError(f"BPM detection failed: {e}") from e
-
-    def _detect_beats(
-        self,
-        audio_path: Path,
-        progress_callback: Optional[ProgressCallback] = None,
-    ) -> List[float]:
-        """Detect beat positions throughout the audio.
-
-        Args:
-            audio_path: Path to audio file
-            progress_callback: Optional progress callback
-
-        Returns:
-            List of beat times in seconds
-        """
-        try:
-            source = aubio.source(str(audio_path), self.sample_rate, self.hop_s)
-            tempo = aubio.tempo("default", self.win_s, self.hop_s, self.sample_rate)
-
-            beat_times: List[float] = []
-            total_frames = 0
-
-            # Get total frames for progress
-            duration = self._get_audio_duration(audio_path)
-            total_expected_frames = int(duration * self.sample_rate)
-
-            while True:
-                samples, read = source()
-                is_beat = tempo(samples)
-
-                if is_beat:
-                    beat_time = total_frames / self.sample_rate
-                    beat_times.append(beat_time)
-
-                total_frames += read
-
-                # Update progress (scale between 0.3 and 0.9)
-                if progress_callback and total_expected_frames > 0:
-                    progress = 0.3 + (total_frames / total_expected_frames) * 0.6
-                    progress_callback(min(0.9, progress), "Detecting beats...")
-
-                if read < self.hop_s:
-                    break
-
-            logger.debug(f"Detected {len(beat_times)} beats")
-            return beat_times
-
-        except Exception as e:
-            raise BeatDetectionError(f"Beat detection failed: {e}") from e
-
-    def _get_audio_duration(self, audio_path: Path) -> float:
-        """Get audio file duration in seconds.
-
-        Args:
-            audio_path: Path to audio file
-
-        Returns:
-            Duration in seconds
-        """
-        try:
-            source = aubio.source(str(audio_path), self.sample_rate, self.hop_s)
-            duration = source.duration / source.samplerate
-            return duration
-        except Exception:
-            # Fallback: estimate from file size (rough)
-            return 180.0  # Default 3 minutes
 
     def _calculate_bpm_from_beats(self, beat_times: List[float]) -> float:
         """Calculate BPM from beat intervals.
