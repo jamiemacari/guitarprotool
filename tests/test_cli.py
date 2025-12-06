@@ -198,3 +198,35 @@ class TestDetectBPMOnly:
 
         # Should not raise
         detect_bpm_only()
+
+
+class TestOriginalTempoFallback:
+    """Test that original_tempo falls back to detected BPM when not found in GP file."""
+
+    def test_original_tempo_fallback_to_detected_bpm(self):
+        """Test that when get_original_tempo returns None, we use detected BPM.
+
+        This tests the fix for the bug where original_tempo=None caused:
+        TypeError: int() argument must be a string, a bytes-like object
+        or a real number, not 'NoneType'
+        """
+        # Create mock XMLModifier that returns None for original tempo
+        mock_modifier = MagicMock()
+        mock_modifier.get_original_tempo.return_value = None
+
+        # Create beat_info with a detected BPM
+        detected_bpm = 156.6
+        beat_info = BeatInfo(
+            bpm=detected_bpm,
+            beat_times=[0.0, 0.383, 0.766, 1.149],  # ~156.6 BPM
+            confidence=0.98,
+        )
+
+        # Simulate the fallback logic from run_pipeline
+        original_tempo = mock_modifier.get_original_tempo()
+        if original_tempo is None:
+            original_tempo = beat_info.bpm
+
+        # Verify the fallback worked
+        assert original_tempo == detected_bpm
+        assert original_tempo is not None

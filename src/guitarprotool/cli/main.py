@@ -407,6 +407,13 @@ def run_pipeline():
             modifier.load()
             original_tempo = modifier.get_original_tempo()
 
+            # Fall back to detected BPM if original tempo not found in GP file
+            if original_tempo is None:
+                original_tempo = beat_info.bpm
+                logger.info(
+                    f"No tempo found in GP file, using detected BPM: {original_tempo:.1f}"
+                )
+
             # Display beat info
             progress.stop()
             console.print()
