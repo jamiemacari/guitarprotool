@@ -553,6 +553,37 @@ class TestHelperMethods:
         tempo = modifier.get_original_tempo()
         assert tempo is None
 
+    def test_get_original_tempo_space_separated(self, temp_dir):
+        """Test extracting tempo when value is space-separated (e.g., '78 2').
+
+        Some GP8 files store tempo as 'BPM BEAT_TYPE' format.
+        We should extract only the BPM (first value).
+        """
+        gpif_path = temp_dir / "score_space_tempo.gpif"
+        content = """<?xml version="1.0" encoding="UTF-8"?>
+<GPIF>
+    <MasterTrack>
+        <Tracks>0</Tracks>
+        <Automations>
+            <Automation>
+                <Type>Tempo</Type>
+                <Linear>false</Linear>
+                <Bar>0</Bar>
+                <Position>0</Position>
+                <Visible>true</Visible>
+                <Value>78 2</Value>
+            </Automation>
+        </Automations>
+    </MasterTrack>
+</GPIF>"""
+        gpif_path.write_text(content)
+
+        modifier = XMLModifier(gpif_path)
+        modifier.load()
+
+        tempo = modifier.get_original_tempo()
+        assert tempo == 78.0
+
     def test_get_bar_count(self, minimal_gpif):
         """Test getting bar count."""
         modifier = XMLModifier(minimal_gpif)
