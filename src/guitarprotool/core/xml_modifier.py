@@ -344,7 +344,10 @@ class XMLModifier:
             if tempo_automation is not None:
                 value = tempo_automation.find("Value")
                 if value is not None and value.text:
-                    return float(value.text)
+                    # Tempo value may be space-separated (e.g., "78 2" for BPM and beat type)
+                    # Extract just the first value (BPM)
+                    tempo_str = value.text.strip().split()[0]
+                    return float(tempo_str)
 
             logger.debug("Tempo automation not found in XML")
             return None
