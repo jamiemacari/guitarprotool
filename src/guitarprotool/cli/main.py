@@ -325,48 +325,6 @@ def get_manual_bpm() -> Optional[float]:
     return float(bpm_str) if bpm_str else None
 
 
-def get_audio_offset(first_beat_time: float) -> float:
-    """Prompt user for audio offset adjustment.
-
-    Args:
-        first_beat_time: The detected first beat time in seconds
-
-    Returns:
-        Offset in seconds (positive = delay audio, negative = advance audio)
-    """
-    console.print(
-        f"\n[cyan]First beat detected at:[/cyan] {first_beat_time:.3f} seconds"
-    )
-    console.print(
-        "[dim]If the tab is ahead of the audio, enter a positive offset.\n"
-        "If the tab is behind the audio, enter a negative offset.[/dim]"
-    )
-
-    use_offset = questionary.confirm(
-        "Would you like to adjust the audio sync offset?",
-        default=False,
-        style=custom_style,
-    ).ask()
-
-    if not use_offset:
-        return 0.0
-
-    def validate_offset(val: str) -> bool:
-        try:
-            float(val)
-            return True
-        except ValueError:
-            return False
-
-    offset_str = questionary.text(
-        "Enter offset in seconds (e.g., 0.1 or -0.05):",
-        validate=validate_offset,
-        style=custom_style,
-    ).ask()
-
-    return float(offset_str) if offset_str else 0.0
-
-
 def run_pipeline():
     """Execute the full audio injection pipeline."""
     console.print()
@@ -471,12 +429,6 @@ def run_pipeline():
                 )
                 console.print(f"[cyan]Using manual BPM:[/cyan] {manual_bpm}")
 
-            # Option to adjust audio sync offset
-            first_beat_time = beat_info.beat_times[0] if beat_info.beat_times else 0.0
-            audio_offset = get_audio_offset(first_beat_time)
-            if audio_offset != 0.0:
-                console.print(f"[cyan]Using audio offset:[/cyan] {audio_offset:+.3f} seconds")
-
             console.print()
 
             # Restart progress for remaining tasks
@@ -496,7 +448,6 @@ def run_pipeline():
                     beat_info,
                     original_tempo=original_tempo,
                     sync_interval=16,
-                    start_offset=audio_offset,
                     max_bars=bar_count if bar_count > 0 else None,
                 )
 
