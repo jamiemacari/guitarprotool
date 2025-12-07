@@ -182,19 +182,20 @@ class BeatDetector:
                 beat_frames, sr=sr, hop_length=self.hop_length
             ).tolist()
 
-            # Use the first onset as the starting point if available
-            # This is more accurate than the first beat for finding when music starts
-            if onset_times and beat_times:
+            # Use the first onset as the starting point
+            # This is more accurate than beat detection for finding when music starts
+            if onset_times:
                 first_onset = onset_times[0]
-                first_beat = beat_times[0]
-                # If first onset is before first beat, use onset as the start
-                # Replace the first beat time with the first onset time
-                if first_onset < first_beat:
-                    beat_times[0] = first_onset
+                if beat_times:
+                    first_beat = beat_times[0]
                     logger.debug(
-                        f"Using first onset ({first_onset:.3f}s) instead of "
-                        f"first beat ({first_beat:.3f}s)"
+                        f"First onset: {first_onset:.3f}s, first beat: {first_beat:.3f}s"
                     )
+                # Always use the first onset as the starting point for bar 0
+                # Insert it at the beginning of beat_times so generate_sync_points uses it
+                if not beat_times or first_onset != beat_times[0]:
+                    beat_times.insert(0, first_onset)
+                    logger.debug(f"Using first onset ({first_onset:.3f}s) as start point")
 
             if progress_callback:
                 progress_callback(0.7, "Calculating confidence...")
