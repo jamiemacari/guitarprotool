@@ -302,3 +302,22 @@ Run with: `python -m guitarprotool` or `guitarprotool` (if installed)
 ### Dependencies Changed
 - Replaced `aubio` with `librosa` for beat detection (better Python/NumPy compatibility)
 - `librosa` is larger but more actively maintained
+
+## Planned Enhancement: Adaptive Tempo Sync
+
+**Status:** Planned (see `docs/ADAPTIVE_TEMPO_SYNC_PLAN.md`)
+**Branch:** `feature/adaptive-tempo-sync`
+
+**Problem:** Current sync point generation sets `modified_tempo = original_tempo` for all sync points. This causes drift accumulation for recordings with tempo variation - the start syncs well but alignment degrades over time.
+
+**Solution:** Implement adaptive tempo sync that:
+1. Calculates local BPM from detected beat intervals at each sync point position
+2. Places sync points adaptively - more frequent where drift > 2%, sparse where stable
+3. Generates a drift report showing detected vs expected tempo
+
+**Key Changes:**
+- New `DriftAnalyzer` class in `src/guitarprotool/core/drift_analyzer.py`
+- Add `adaptive` parameter to `BeatDetector.generate_sync_points()`
+- Display drift report in CLI after sync point generation
+
+See `docs/ADAPTIVE_TEMPO_SYNC_PLAN.md` for full implementation details.
