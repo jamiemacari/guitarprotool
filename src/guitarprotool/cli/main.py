@@ -443,10 +443,12 @@ def run_pipeline():
                 # Generate sync points
                 sync_task = progress2.add_task("[cyan]Generating sync points...", total=None)
                 detector = BeatDetector()
+                bar_count = modifier.get_bar_count()
                 sync_point_data = detector.generate_sync_points(
                     beat_info,
                     original_tempo=original_tempo,
                     sync_interval=16,
+                    max_bars=bar_count if bar_count > 0 else None,
                 )
 
                 # Convert to XML modifier format

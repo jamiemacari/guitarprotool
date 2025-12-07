@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important Workflow Rules
+
+**NEVER merge PRs to main without explicit user confirmation.** Even if the user's prompt says to "complete the PR" or "merge it", always ask for confirmation before merging. Create the PR, then wait for the user to confirm it should be merged.
+
 ## Project Overview
 
 Guitar Pro 8 Audio Injection Tool - Automates downloading YouTube audio, injecting it into Guitar Pro 8 (.gp) files, and creating sync points for playback alignment. Built for automating bass tab practice workflows.
