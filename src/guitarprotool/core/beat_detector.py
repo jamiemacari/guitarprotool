@@ -252,12 +252,15 @@ class BeatDetector:
         This assumes the audio is recorded at (approximately) the same tempo as
         the tab, which is the primary use case for this tool.
 
+        The first detected beat in the audio is used as the starting point for
+        bar 0, ensuring the tab aligns with when the music actually starts.
+
         Args:
-            beat_info: Beat detection results from analyze() (used for duration)
+            beat_info: Beat detection results from analyze()
             original_tempo: Tab tempo in BPM
             beats_per_bar: Beats per bar (4 for 4/4 time)
             sync_interval: Create sync point every N beats (used for bar interval)
-            start_offset: Audio offset in seconds (for intro/count-in)
+            start_offset: Additional audio offset in seconds (for manual adjustment)
             max_bars: Maximum bar number (from GP file bar count). If None, uses
                       audio duration to estimate.
 
@@ -276,17 +279,20 @@ class BeatDetector:
         # Calculate bar interval from sync_interval (e.g., every 16 beats = every 4 bars)
         bar_interval = sync_interval // beats_per_bar
 
+        # Use the first detected beat as the starting point for bar 0
+        # This aligns the tab with when the music actually starts in the audio
+        first_beat_time = beat_info.beat_times[0] + start_offset
+
         logger.info(
             f"Generating sync points: every {bar_interval} bars, "
-            f"original_tempo={original_tempo}, max_bars={max_bars}"
+            f"original_tempo={original_tempo}, max_bars={max_bars}, "
+            f"first_beat={first_beat_time:.3f}s"
         )
 
         sync_points: List[SyncPointData] = []
 
-        # Calculate audio duration
+        # Calculate audio duration from first to last beat
         audio_duration = beat_info.beat_times[-1] - beat_info.beat_times[0]
-        if start_offset > 0:
-            audio_duration = max(0, audio_duration - start_offset)
 
         # Calculate time per bar based on original tempo
         seconds_per_beat = 60.0 / original_tempo
@@ -298,8 +304,8 @@ class BeatDetector:
 
         # Generate sync points at regular bar intervals
         for bar in range(0, max_bars, bar_interval):
-            # Calculate time position for this bar
-            bar_time = start_offset + (bar * seconds_per_bar)
+            # Calculate time position for this bar, starting from first beat
+            bar_time = first_beat_time + (bar * seconds_per_bar)
 
             # Calculate frame offset (samples at 44.1kHz)
             frame_offset = int(bar_time * self.sample_rate)
@@ -316,17 +322,8 @@ class BeatDetector:
                 f"Sync point: bar={bar}, frame={frame_offset}, tempo={original_tempo:.3f}"
             )
 
-        # Ensure first sync point is at bar 0
-        if sync_points and sync_points[0].bar != 0:
-            sync_points.insert(
-                0,
-                SyncPointData(
-                    bar=0,
-                    frame_offset=int(start_offset * self.sample_rate),
-                    modified_tempo=original_tempo,
-                    original_tempo=original_tempo,
-                ),
-            )
+        # First sync point should already be at bar 0 from the loop above
+        # No need to insert separately
 
         logger.success(f"Generated {len(sync_points)} sync points")
         return sync_points
