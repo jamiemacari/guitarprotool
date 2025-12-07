@@ -166,10 +166,35 @@ class BeatDetector:
             if bpm <= 0:
                 raise BPMDetectionError("No BPM detected. Audio may not have a clear beat.")
 
+            # Detect onsets to find the first note more accurately
+            if progress_callback:
+                progress_callback(0.5, "Detecting first onset...")
+
+            onset_frames = librosa.onset.onset_detect(
+                y=y, sr=sr, hop_length=self.hop_length
+            )
+            onset_times = librosa.frames_to_time(
+                onset_frames, sr=sr, hop_length=self.hop_length
+            ).tolist()
+
             # Convert beat frames to times
             beat_times = librosa.frames_to_time(
                 beat_frames, sr=sr, hop_length=self.hop_length
             ).tolist()
+
+            # Use the first onset as the starting point if available
+            # This is more accurate than the first beat for finding when music starts
+            if onset_times and beat_times:
+                first_onset = onset_times[0]
+                first_beat = beat_times[0]
+                # If first onset is before first beat, use onset as the start
+                # Replace the first beat time with the first onset time
+                if first_onset < first_beat:
+                    beat_times[0] = first_onset
+                    logger.debug(
+                        f"Using first onset ({first_onset:.3f}s) instead of "
+                        f"first beat ({first_beat:.3f}s)"
+                    )
 
             if progress_callback:
                 progress_callback(0.7, "Calculating confidence...")
