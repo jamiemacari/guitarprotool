@@ -54,7 +54,7 @@ class SyncPointData:
 
     Attributes:
         bar: Bar/measure number (0-indexed)
-        frame_offset: Audio frame position (sample number at 44.1kHz)
+        frame_offset: Audio frame position relative to first beat (sample number at 44.1kHz)
         modified_tempo: Detected tempo in audio at this point
         original_tempo: Tempo specified in tab
     """
@@ -63,6 +63,22 @@ class SyncPointData:
     frame_offset: int
     modified_tempo: float
     original_tempo: float
+
+
+@dataclass
+class SyncResult:
+    """Result of sync point generation, including frame padding for alignment.
+
+    Attributes:
+        sync_points: List of sync points with relative frame offsets
+        frame_padding: Negative frame offset to align audio start with bar 0.
+                      This should be set on BackingTrackConfig.frame_padding.
+        first_beat_time: Time in seconds where music starts in the audio.
+    """
+
+    sync_points: List[SyncPointData]
+    frame_padding: int
+    first_beat_time: float
 
 
 # Type alias for progress callbacks
@@ -271,15 +287,16 @@ class BeatDetector:
         sync_interval: int = 16,
         start_offset: float = 0.0,
         max_bars: Optional[int] = None,
-    ) -> List[SyncPointData]:
+    ) -> SyncResult:
         """Generate sync points for audio that matches the tab tempo.
 
         Creates sync points at regular bar intervals based on the original tempo.
         This assumes the audio is recorded at (approximately) the same tempo as
         the tab, which is the primary use case for this tool.
 
-        The first detected beat in the audio is used as the starting point for
-        bar 0, ensuring the tab aligns with when the music actually starts.
+        The first detected beat/onset in the audio is used as the starting point.
+        The frame_padding value returned should be set on BackingTrackConfig to
+        align the audio with bar 0 of the tab.
 
         Args:
             beat_info: Beat detection results from analyze()
@@ -291,7 +308,7 @@ class BeatDetector:
                       audio duration to estimate.
 
         Returns:
-            List of SyncPointData ready for XML injection
+            SyncResult containing sync points and frame_padding for alignment
 
         Raises:
             BeatDetectionError: If not enough beats to generate sync points
@@ -305,14 +322,19 @@ class BeatDetector:
         # Calculate bar interval from sync_interval (e.g., every 16 beats = every 4 bars)
         bar_interval = sync_interval // beats_per_bar
 
-        # Use the first detected beat as the starting point for bar 0
-        # This aligns the tab with when the music actually starts in the audio
+        # Use the first detected beat/onset as the starting point for bar 0
+        # This is when the music actually starts in the audio
         first_beat_time = beat_info.beat_times[0] + start_offset
+
+        # Calculate frame_padding as negative offset to align audio with bar 0
+        # GP8 uses FramePadding in BackingTrack to offset the audio start
+        # Negative value = skip this many frames at the start of the audio
+        frame_padding = -int(first_beat_time * self.sample_rate)
 
         logger.info(
             f"Generating sync points: every {bar_interval} bars, "
             f"original_tempo={original_tempo}, max_bars={max_bars}, "
-            f"first_beat={first_beat_time:.3f}s"
+            f"first_beat={first_beat_time:.3f}s, frame_padding={frame_padding}"
         )
 
         sync_points: List[SyncPointData] = []
@@ -329,12 +351,13 @@ class BeatDetector:
             max_bars = int(audio_duration / seconds_per_bar) + 1
 
         # Generate sync points at regular bar intervals
+        # Frame offsets are relative to the first beat (bar 0 = frame 0)
         for bar in range(0, max_bars, bar_interval):
-            # Calculate time position for this bar, starting from first beat
-            bar_time = first_beat_time + (bar * seconds_per_bar)
+            # Calculate time position relative to first beat
+            relative_time = bar * seconds_per_bar
 
-            # Calculate frame offset (samples at 44.1kHz)
-            frame_offset = int(bar_time * self.sample_rate)
+            # Calculate frame offset relative to first beat (bar 0 = 0)
+            frame_offset = int(relative_time * self.sample_rate)
 
             sync_point = SyncPointData(
                 bar=bar,
@@ -348,11 +371,16 @@ class BeatDetector:
                 f"Sync point: bar={bar}, frame={frame_offset}, tempo={original_tempo:.3f}"
             )
 
-        # First sync point should already be at bar 0 from the loop above
-        # No need to insert separately
+        logger.success(
+            f"Generated {len(sync_points)} sync points, "
+            f"frame_padding={frame_padding} ({first_beat_time:.3f}s offset)"
+        )
 
-        logger.success(f"Generated {len(sync_points)} sync points")
-        return sync_points
+        return SyncResult(
+            sync_points=sync_points,
+            frame_padding=frame_padding,
+            first_beat_time=first_beat_time,
+        )
 
     def _calculate_bpm_from_beats(self, beat_times: List[float]) -> float:
         """Calculate BPM from beat intervals.

@@ -15,6 +15,7 @@ from guitarprotool.core.beat_detector import (
     BeatDetector,
     BeatInfo,
     SyncPointData,
+    SyncResult,
 )
 from guitarprotool.utils.exceptions import BeatDetectionError, BPMDetectionError
 
@@ -301,32 +302,35 @@ class TestGenerateSyncPoints:
         beat_times = [i * beat_interval for i in range(60)]
         return BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.9)
 
-    def test_generate_sync_points_returns_list(self, beat_detector, sample_beat_info):
-        """Test that generate_sync_points returns a list."""
-        sync_points = beat_detector.generate_sync_points(sample_beat_info, original_tempo=120.0)
+    def test_generate_sync_points_returns_sync_result(self, beat_detector, sample_beat_info):
+        """Test that generate_sync_points returns a SyncResult."""
+        result = beat_detector.generate_sync_points(sample_beat_info, original_tempo=120.0)
 
-        assert isinstance(sync_points, list)
-        assert len(sync_points) > 0
-        assert all(isinstance(sp, SyncPointData) for sp in sync_points)
+        assert isinstance(result, SyncResult)
+        assert isinstance(result.sync_points, list)
+        assert len(result.sync_points) > 0
+        assert all(isinstance(sp, SyncPointData) for sp in result.sync_points)
+        assert isinstance(result.frame_padding, int)
+        assert isinstance(result.first_beat_time, float)
 
     def test_generate_sync_points_first_bar_zero(self, beat_detector, sample_beat_info):
         """Test that first sync point is at bar 0."""
-        sync_points = beat_detector.generate_sync_points(sample_beat_info, original_tempo=120.0)
+        result = beat_detector.generate_sync_points(sample_beat_info, original_tempo=120.0)
 
-        assert sync_points[0].bar == 0
+        assert result.sync_points[0].bar == 0
 
     def test_generate_sync_points_frame_offset_at_sample_rate(
         self, beat_detector, sample_beat_info
     ):
-        """Test that frame_offset is calculated at sample rate."""
-        sync_points = beat_detector.generate_sync_points(sample_beat_info, original_tempo=120.0)
+        """Test that frame_offset is calculated relative to first beat."""
+        result = beat_detector.generate_sync_points(sample_beat_info, original_tempo=120.0)
 
-        # First beat at time 0 should have frame_offset 0
-        assert sync_points[0].frame_offset == 0
+        # Bar 0 should have frame_offset 0 (relative to first beat)
+        assert result.sync_points[0].frame_offset == 0
 
     def test_generate_sync_points_interval(self, beat_detector, sample_beat_info):
         """Test sync points are created at correct intervals."""
-        sync_points = beat_detector.generate_sync_points(
+        result = beat_detector.generate_sync_points(
             sample_beat_info,
             original_tempo=120.0,
             beats_per_bar=4,
@@ -334,25 +338,25 @@ class TestGenerateSyncPoints:
         )
 
         # With 60 beats and 16-beat intervals, we should have multiple sync points
-        assert len(sync_points) >= 1
+        assert len(result.sync_points) >= 1
 
     def test_generate_sync_points_custom_interval(self, beat_detector, sample_beat_info):
         """Test sync points with custom interval."""
-        sync_points_8 = beat_detector.generate_sync_points(
+        result_8 = beat_detector.generate_sync_points(
             sample_beat_info, original_tempo=120.0, sync_interval=8
         )
-        sync_points_32 = beat_detector.generate_sync_points(
+        result_32 = beat_detector.generate_sync_points(
             sample_beat_info, original_tempo=120.0, sync_interval=32
         )
 
         # More frequent interval = more sync points
-        assert len(sync_points_8) > len(sync_points_32)
+        assert len(result_8.sync_points) > len(result_32.sync_points)
 
     def test_generate_sync_points_contains_tempo(self, beat_detector, sample_beat_info):
         """Test that sync points contain tempo information."""
-        sync_points = beat_detector.generate_sync_points(sample_beat_info, original_tempo=120.0)
+        result = beat_detector.generate_sync_points(sample_beat_info, original_tempo=120.0)
 
-        for sp in sync_points:
+        for sp in result.sync_points:
             assert sp.original_tempo == 120.0
             assert sp.modified_tempo > 0
 
@@ -372,14 +376,17 @@ class TestGenerateSyncPoints:
 
     def test_generate_sync_points_with_start_offset(self, beat_detector, sample_beat_info):
         """Test sync points with start offset."""
-        sync_points = beat_detector.generate_sync_points(
+        result = beat_detector.generate_sync_points(
             sample_beat_info,
             original_tempo=120.0,
-            start_offset=1.0,  # Skip first 1 second
+            start_offset=1.0,  # Additional offset of 1 second
         )
 
-        # Frame offset should account for the offset
-        assert sync_points[0].frame_offset >= 0
+        # Frame offset for bar 0 should still be 0 (relative)
+        # But frame_padding should be more negative due to offset
+        assert result.sync_points[0].frame_offset == 0
+        # With first beat at 0.0s + 1.0s offset, frame_padding should be -44100
+        assert result.frame_padding == -44100
 
     def test_generate_sync_points_different_beats_per_bar(self, beat_detector):
         """Test sync points with different time signatures."""
@@ -388,7 +395,7 @@ class TestGenerateSyncPoints:
         beat_info = BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.9)
 
         # 3/4 time (3 beats per bar)
-        sync_points_3 = beat_detector.generate_sync_points(
+        result_3 = beat_detector.generate_sync_points(
             beat_info,
             original_tempo=120.0,
             beats_per_bar=3,
@@ -396,7 +403,7 @@ class TestGenerateSyncPoints:
         )
 
         # 4/4 time (4 beats per bar)
-        sync_points_4 = beat_detector.generate_sync_points(
+        result_4 = beat_detector.generate_sync_points(
             beat_info,
             original_tempo=120.0,
             beats_per_bar=4,
@@ -404,8 +411,22 @@ class TestGenerateSyncPoints:
         )
 
         # Both should generate sync points
-        assert len(sync_points_3) >= 1
-        assert len(sync_points_4) >= 1
+        assert len(result_3.sync_points) >= 1
+        assert len(result_4.sync_points) >= 1
+
+    def test_generate_sync_points_frame_padding_with_late_start(self, beat_detector):
+        """Test frame_padding is calculated correctly for audio starting late."""
+        # Audio with music starting at 2 seconds
+        beat_times = [2.0 + i * 0.5 for i in range(20)]
+        beat_info = BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.9)
+
+        result = beat_detector.generate_sync_points(beat_info, original_tempo=120.0)
+
+        # frame_padding should be negative, equal to -2.0 * 44100 = -88200
+        assert result.frame_padding == -88200
+        assert result.first_beat_time == 2.0
+        # Bar 0 frame_offset should still be 0 (relative to first beat)
+        assert result.sync_points[0].frame_offset == 0
 
 
 class TestSyncPointData:
@@ -523,12 +544,12 @@ class TestPrivateMethods:
 
 
 class TestIntegration:
-    """Integration tests with mocked aubio."""
+    """Integration tests with mocked librosa."""
 
     def test_full_workflow(self, beat_detector):
         """Test complete workflow: analyze -> generate sync points."""
         # Create beat info manually (simulating what analyze would return)
-        # This tests the workflow without needing aubio
+        # This tests the workflow without needing librosa
         beat_times = [i * 0.5 for i in range(20)]  # 10 seconds at 120 BPM
         beat_info = BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.9)
 
@@ -536,15 +557,16 @@ class TestIntegration:
         assert len(beat_info.beat_times) > 0
 
         # Generate sync points
-        sync_points = beat_detector.generate_sync_points(
+        result = beat_detector.generate_sync_points(
             beat_info,
             original_tempo=beat_info.bpm,
             sync_interval=8,
         )
 
         # Should generate at least one sync point
-        assert len(sync_points) >= 1
-        assert sync_points[0].bar == 0
+        assert len(result.sync_points) >= 1
+        assert result.sync_points[0].bar == 0
+        assert result.frame_padding == 0  # First beat at time 0
 
     def test_workflow_with_different_original_tempo(self, beat_detector):
         """Test workflow where original tempo differs from detected."""
@@ -553,13 +575,13 @@ class TestIntegration:
         beat_info = BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.9)
 
         # Use different original tempo
-        sync_points = beat_detector.generate_sync_points(
+        result = beat_detector.generate_sync_points(
             beat_info,
             original_tempo=100.0,  # Different from detected
         )
 
         # Modified tempo should reflect detected, original should be 100
-        for sp in sync_points:
+        for sp in result.sync_points:
             assert sp.original_tempo == 100.0
 
 
@@ -571,34 +593,34 @@ class TestEdgeCases:
         beat_times = [0.0, 0.5]  # Only 2 beats
         beat_info = BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.5)
 
-        sync_points = beat_detector.generate_sync_points(
-            beat_info, original_tempo=120.0, sync_interval=1
+        result = beat_detector.generate_sync_points(
+            beat_info, original_tempo=120.0, sync_interval=4  # Every 1 bar
         )
 
-        assert len(sync_points) >= 1
+        assert len(result.sync_points) >= 1
 
     def test_sync_points_frame_offset_calculation(self, beat_detector):
-        """Test frame offset is calculated correctly."""
-        # Beat at 1.0 second should have frame_offset = 44100
+        """Test frame offset is calculated correctly (relative to first beat)."""
         beat_times = [0.0, 0.5, 1.0, 1.5]
         beat_info = BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.9)
 
-        sync_points = beat_detector.generate_sync_points(
-            beat_info, original_tempo=120.0, sync_interval=1
+        result = beat_detector.generate_sync_points(
+            beat_info, original_tempo=120.0, sync_interval=4  # Every 1 bar
         )
 
-        # First sync point at time 0
-        assert sync_points[0].frame_offset == 0
+        # First sync point at bar 0 has relative frame_offset 0
+        assert result.sync_points[0].frame_offset == 0
+        assert result.frame_padding == 0  # First beat at time 0
 
     def test_large_sync_interval(self, beat_detector):
         """Test with sync interval larger than beat count."""
         beat_times = [i * 0.5 for i in range(10)]  # 10 beats
         beat_info = BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.9)
 
-        sync_points = beat_detector.generate_sync_points(
+        result = beat_detector.generate_sync_points(
             beat_info, original_tempo=120.0, sync_interval=100  # Larger than beat count
         )
 
         # Should still have at least one sync point (at bar 0)
-        assert len(sync_points) >= 1
-        assert sync_points[0].bar == 0
+        assert len(result.sync_points) >= 1
+        assert result.sync_points[0].bar == 0

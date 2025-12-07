@@ -22,7 +22,7 @@ from loguru import logger
 
 from guitarprotool import __version__
 from guitarprotool.core.gp_file import GPFile
-from guitarprotool.core.beat_detector import BeatDetector, BeatInfo
+from guitarprotool.core.beat_detector import BeatDetector, BeatInfo, SyncResult
 from guitarprotool.core.xml_modifier import (
     XMLModifier,
     SyncPoint,
@@ -444,7 +444,7 @@ def run_pipeline():
                 sync_task = progress2.add_task("[cyan]Generating sync points...", total=None)
                 detector = BeatDetector()
                 bar_count = modifier.get_bar_count()
-                sync_point_data = detector.generate_sync_points(
+                sync_result = detector.generate_sync_points(
                     beat_info,
                     original_tempo=original_tempo,
                     sync_interval=16,
@@ -459,7 +459,7 @@ def run_pipeline():
                         modified_tempo=sp.modified_tempo,
                         original_tempo=sp.original_tempo,
                     )
-                    for sp in sync_point_data
+                    for sp in sync_result.sync_points
                 ]
                 progress2.update(
                     sync_task,
@@ -478,11 +478,13 @@ def run_pipeline():
                     original_file_path=str(audio_info.file_path),
                 )
 
-                # Create backing track config
+                # Create backing track config with frame_padding for audio alignment
+                # frame_padding is negative to skip intro/silence before the first beat
                 track_config = BackingTrackConfig(
                     name=track_name,
                     short_name=track_name[:8] if len(track_name) > 8 else track_name,
                     asset_id=0,
+                    frame_padding=sync_result.frame_padding,
                 )
 
                 # Inject elements
@@ -515,7 +517,8 @@ def run_pipeline():
                 f"Modified file saved to:\n[cyan]{output_path}[/cyan]\n\n"
                 f"[dim]Detected BPM: {beat_info.bpm:.1f}\n"
                 f"Sync points: {len(sync_points)}\n"
-                f"Original tempo: {original_tempo:.1f}[/dim]",
+                f"Original tempo: {original_tempo:.1f}\n"
+                f"Audio offset: {sync_result.first_beat_time:.3f}s[/dim]",
                 title="Complete",
                 border_style="green",
             )
