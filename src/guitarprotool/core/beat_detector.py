@@ -287,12 +287,14 @@ class BeatDetector:
         sync_interval: int = 16,
         start_offset: float = 0.0,
         max_bars: Optional[int] = None,
+        adaptive: bool = True,
     ) -> SyncResult:
-        """Generate sync points for audio that matches the tab tempo.
+        """Generate sync points for audio alignment with the tab.
 
-        Creates sync points at regular bar intervals based on the original tempo.
-        This assumes the audio is recorded at (approximately) the same tempo as
-        the tab, which is the primary use case for this tool.
+        Creates sync points for aligning audio playback with tab notation.
+        When adaptive=True (default), uses DriftAnalyzer to detect local tempo
+        at each sync point and place sync points more frequently where tempo
+        drifts significantly.
 
         The first detected beat/onset in the audio is used as the starting point.
         The frame_padding value returned should be set on BackingTrackConfig to
@@ -306,6 +308,9 @@ class BeatDetector:
             start_offset: Additional audio offset in seconds (for manual adjustment)
             max_bars: Maximum bar number (from GP file bar count). If None, uses
                       audio duration to estimate.
+            adaptive: If True (default), use adaptive sync point placement with
+                     local tempo detection. If False, use static intervals with
+                     original_tempo for all sync points.
 
         Returns:
             SyncResult containing sync points and frame_padding for alignment
@@ -319,60 +324,34 @@ class BeatDetector:
         if len(beat_info.beat_times) < 2:
             raise BeatDetectionError("Need at least 2 beats to generate sync points")
 
-        # Calculate bar interval from sync_interval (e.g., every 16 beats = every 4 bars)
-        bar_interval = sync_interval // beats_per_bar
-
         # Use the first detected beat/onset as the starting point for bar 0
-        # This is when the music actually starts in the audio
         first_beat_time = beat_info.beat_times[0] + start_offset
 
         # Calculate frame_padding as negative offset to align audio with bar 0
-        # GP8 uses FramePadding in BackingTrack to offset the audio start
-        # Negative value = skip this many frames at the start of the audio
         frame_padding = -int(first_beat_time * self.sample_rate)
 
-        logger.info(
-            f"Generating sync points: every {bar_interval} bars, "
-            f"original_tempo={original_tempo}, max_bars={max_bars}, "
-            f"first_beat={first_beat_time:.3f}s, frame_padding={frame_padding}"
-        )
+        # Calculate bar interval from sync_interval
+        bar_interval = sync_interval // beats_per_bar
 
-        sync_points: List[SyncPointData] = []
-
-        # Calculate audio duration from first to last beat
-        audio_duration = beat_info.beat_times[-1] - beat_info.beat_times[0]
-
-        # Calculate time per bar based on original tempo
-        seconds_per_beat = 60.0 / original_tempo
-        seconds_per_bar = seconds_per_beat * beats_per_bar
-
-        # Estimate total bars from audio duration if max_bars not provided
+        # Calculate max_bars if not provided
         if max_bars is None:
+            audio_duration = beat_info.beat_times[-1] - beat_info.beat_times[0]
+            seconds_per_beat = 60.0 / original_tempo
+            seconds_per_bar = seconds_per_beat * beats_per_bar
             max_bars = int(audio_duration / seconds_per_bar) + 1
 
-        # Generate sync points at regular bar intervals
-        # Frame offsets are relative to the first beat (bar 0 = frame 0)
-        for bar in range(0, max_bars, bar_interval):
-            # Calculate time position relative to first beat
-            relative_time = bar * seconds_per_bar
-
-            # Calculate frame offset relative to first beat (bar 0 = 0)
-            frame_offset = int(relative_time * self.sample_rate)
-
-            sync_point = SyncPointData(
-                bar=bar,
-                frame_offset=frame_offset,
-                modified_tempo=original_tempo,  # Audio matches tab tempo
-                original_tempo=original_tempo,
+        if adaptive:
+            sync_points = self._generate_adaptive_sync_points(
+                beat_info, original_tempo, beats_per_bar, bar_interval, max_bars
             )
-            sync_points.append(sync_point)
-
-            logger.debug(
-                f"Sync point: bar={bar}, frame={frame_offset}, tempo={original_tempo:.3f}"
+        else:
+            sync_points = self._generate_static_sync_points(
+                original_tempo, beats_per_bar, bar_interval, max_bars
             )
 
         logger.success(
-            f"Generated {len(sync_points)} sync points, "
+            f"Generated {len(sync_points)} sync points "
+            f"({'adaptive' if adaptive else 'static'}), "
             f"frame_padding={frame_padding} ({first_beat_time:.3f}s offset)"
         )
 
@@ -381,6 +360,79 @@ class BeatDetector:
             frame_padding=frame_padding,
             first_beat_time=first_beat_time,
         )
+
+    def _generate_adaptive_sync_points(
+        self,
+        beat_info: BeatInfo,
+        original_tempo: float,
+        beats_per_bar: int,
+        bar_interval: int,
+        max_bars: int,
+    ) -> List[SyncPointData]:
+        """Generate sync points with adaptive tempo detection.
+
+        Uses DriftAnalyzer to calculate local tempo at each sync point
+        and place sync points more frequently where drift is significant.
+        """
+        from guitarprotool.core.drift_analyzer import DriftAnalyzer
+        from guitarprotool.utils.exceptions import InsufficientBeatsError
+
+        try:
+            analyzer = DriftAnalyzer(
+                beat_times=beat_info.beat_times,
+                original_tempo=original_tempo,
+                beats_per_bar=beats_per_bar,
+                sample_rate=self.sample_rate,
+            )
+            sync_points = analyzer.generate_adaptive_sync_points(
+                max_bars=max_bars,
+                base_interval=bar_interval,
+            )
+            logger.info(f"Adaptive sync: {len(sync_points)} sync points generated")
+            return sync_points
+
+        except InsufficientBeatsError:
+            # Fall back to static generation if not enough beats
+            logger.warning("Not enough beats for adaptive sync, using static mode")
+            return self._generate_static_sync_points(
+                original_tempo, beats_per_bar, bar_interval, max_bars
+            )
+
+    def _generate_static_sync_points(
+        self,
+        original_tempo: float,
+        beats_per_bar: int,
+        bar_interval: int,
+        max_bars: int,
+    ) -> List[SyncPointData]:
+        """Generate sync points with static interval (legacy behavior).
+
+        Creates sync points at regular bar intervals, all with the same
+        modified_tempo equal to original_tempo.
+        """
+        sync_points: List[SyncPointData] = []
+
+        seconds_per_beat = 60.0 / original_tempo
+        seconds_per_bar = seconds_per_beat * beats_per_bar
+
+        for bar in range(0, max_bars, bar_interval):
+            relative_time = bar * seconds_per_bar
+            frame_offset = int(relative_time * self.sample_rate)
+
+            sync_point = SyncPointData(
+                bar=bar,
+                frame_offset=frame_offset,
+                modified_tempo=original_tempo,
+                original_tempo=original_tempo,
+            )
+            sync_points.append(sync_point)
+
+            logger.debug(
+                f"Static sync point: bar={bar}, frame={frame_offset}, "
+                f"tempo={original_tempo:.3f}"
+            )
+
+        return sync_points
 
     def _calculate_bpm_from_beats(self, beat_times: List[float]) -> float:
         """Calculate BPM from beat intervals.

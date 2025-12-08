@@ -77,6 +77,18 @@ class BPMDetectionError(BeatDetectionError):
     pass
 
 
+class DriftAnalysisError(BeatDetectionError):
+    """Raised when tempo drift analysis fails."""
+
+    pass
+
+
+class InsufficientBeatsError(DriftAnalysisError):
+    """Raised when there are not enough beats for accurate drift analysis."""
+
+    pass
+
+
 class XMLModificationError(GuitarProToolError):
     """Base class for errors during XML parsing/modification."""
 

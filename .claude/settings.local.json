@@ -1,7 +1,20 @@
 {
   "permissions": {
     "allow": [
-      "Bash(tree:*)"
+      "Bash(source:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(git show:*)",
+      "Bash(git checkout:*)",
+      "Bash(git pull:*)",
+      "Bash(pip install:*)",
+      "Bash(pytest:*)"
     ],
     "deny": [],
     "ask": []
