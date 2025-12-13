@@ -20,6 +20,8 @@ from guitarprotool.cli.main import (
     get_track_name,
     confirm_overwrite,
     display_beat_info,
+    get_troubleshooting_dir,
+    save_troubleshooting_copies,
     main,
 )
 from guitarprotool.core.beat_detector import BeatInfo
@@ -198,6 +200,42 @@ class TestDetectBPMOnly:
 
         # Should not raise
         detect_bpm_only()
+
+
+class TestTroubleshootingCopies:
+    """Test troubleshooting file saving functions."""
+
+    def test_get_troubleshooting_dir_creates_timestamped_dir(self, temp_dir, monkeypatch):
+        """Test that get_troubleshooting_dir creates a timestamped directory."""
+        monkeypatch.chdir(temp_dir)
+
+        result = get_troubleshooting_dir()
+
+        assert result.exists()
+        assert result.is_dir()
+        assert result.parent.name == "files"
+        assert result.name.startswith("run_")
+
+    def test_save_troubleshooting_copies(self, temp_dir):
+        """Test that save_troubleshooting_copies copies both files."""
+        # Create source files
+        gp_file = temp_dir / "test.gp"
+        mp3_file = temp_dir / "test.mp3"
+        gp_file.write_text("gp content")
+        mp3_file.write_text("mp3 content")
+
+        # Create troubleshoot dir
+        troubleshoot_dir = temp_dir / "troubleshoot"
+        troubleshoot_dir.mkdir()
+
+        gp_copy, mp3_copy = save_troubleshooting_copies(gp_file, mp3_file, troubleshoot_dir)
+
+        assert gp_copy.exists()
+        assert mp3_copy.exists()
+        assert gp_copy.read_text() == "gp content"
+        assert mp3_copy.read_text() == "mp3 content"
+        assert gp_copy.name == "test.gp"
+        assert mp3_copy.name == "test.mp3"
 
 
 class TestOriginalTempoFallback:

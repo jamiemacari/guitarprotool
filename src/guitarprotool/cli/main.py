@@ -9,6 +9,7 @@ Provides an interactive command-line interface for:
 
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +24,7 @@ from loguru import logger
 from guitarprotool import __version__
 from guitarprotool.core.gp_file import GPFile
 from guitarprotool.core.beat_detector import BeatDetector, BeatInfo, SyncResult
+from guitarprotool.core.drift_analyzer import DriftAnalyzer, DriftReport, DriftSeverity
 from guitarprotool.core.xml_modifier import (
     XMLModifier,
     SyncPoint,
@@ -203,6 +205,46 @@ def confirm_overwrite(path: Path) -> bool:
     )
 
 
+def get_troubleshooting_dir() -> Path:
+    """Get the directory for saving troubleshooting copies.
+
+    Creates a timestamped subdirectory under 'files/' in the project root.
+
+    Returns:
+        Path to the troubleshooting directory
+    """
+    # Use current working directory's 'files' folder
+    base_dir = Path.cwd() / "files"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    troubleshoot_dir = base_dir / f"run_{timestamp}"
+    troubleshoot_dir.mkdir(parents=True, exist_ok=True)
+    return troubleshoot_dir
+
+
+def save_troubleshooting_copies(
+    output_gp_path: Path,
+    audio_path: Path,
+    troubleshoot_dir: Path,
+) -> tuple[Path, Path]:
+    """Save copies of the GP file and MP3 for troubleshooting.
+
+    Args:
+        output_gp_path: Path to the final GP file
+        audio_path: Path to the processed MP3 file
+        troubleshoot_dir: Directory to save copies to
+
+    Returns:
+        Tuple of (gp_copy_path, mp3_copy_path)
+    """
+    gp_copy_path = troubleshoot_dir / output_gp_path.name
+    mp3_copy_path = troubleshoot_dir / audio_path.name
+
+    shutil.copy2(output_gp_path, gp_copy_path)
+    shutil.copy2(audio_path, mp3_copy_path)
+
+    return gp_copy_path, mp3_copy_path
+
+
 def process_audio(
     source_type: str,
     source_value: str,
@@ -299,6 +341,50 @@ def display_beat_info(beat_info: BeatInfo):
         table.add_row("Duration", f"{duration:.1f} seconds")
 
     console.print(table)
+
+
+def display_drift_report(drift_report: DriftReport):
+    """Display tempo drift analysis results."""
+    # Summary panel
+    summary_lines = drift_report.get_summary_lines()
+    summary_text = "\n".join(summary_lines)
+    console.print(Panel(summary_text, title="Tempo Drift Analysis", border_style="yellow"))
+
+    # If significant drift found, show detail table
+    if drift_report.bars_with_significant_drift:
+        table = Table(title="Bars with Significant Drift", border_style="yellow")
+        table.add_column("Bar", style="dim")
+        table.add_column("Local Tempo", style="cyan")
+        table.add_column("Tab Tempo", style="dim")
+        table.add_column("Drift", style="yellow")
+        table.add_column("Severity", style="red")
+
+        # Show up to 10 bars with significant drift
+        for bar_num in drift_report.bars_with_significant_drift[:10]:
+            drift_info = next(
+                (d for d in drift_report.bar_drifts if d.bar == bar_num),
+                None,
+            )
+            if drift_info:
+                severity_color = {
+                    DriftSeverity.MODERATE: "yellow",
+                    DriftSeverity.SIGNIFICANT: "orange1",
+                    DriftSeverity.SEVERE: "red",
+                }.get(drift_info.severity, "white")
+
+                table.add_row(
+                    str(bar_num),
+                    f"{drift_info.local_tempo:.1f}",
+                    f"{drift_info.original_tempo:.1f}",
+                    f"{drift_info.drift_percent:+.2f}%",
+                    f"[{severity_color}]{drift_info.severity.value}[/{severity_color}]",
+                )
+
+        console.print(table)
+
+        if len(drift_report.bars_with_significant_drift) > 10:
+            remaining = len(drift_report.bars_with_significant_drift) - 10
+            console.print(f"[dim]... and {remaining} more bars with drift[/dim]")
 
 
 def get_manual_bpm() -> Optional[float]:
@@ -440,15 +526,41 @@ def run_pipeline():
                 console=console,
             ) as progress2:
 
-                # Generate sync points
+                # Analyze tempo drift
+                drift_task = progress2.add_task("[cyan]Analyzing tempo drift...", total=None)
+                bar_count = modifier.get_bar_count()
+                max_bars = bar_count if bar_count > 0 else None
+
+                # Create drift analyzer and generate report
+                try:
+                    analyzer = DriftAnalyzer(
+                        beat_times=beat_info.beat_times,
+                        original_tempo=original_tempo,
+                        beats_per_bar=4,
+                    )
+                    drift_report = analyzer.analyze(max_bars=max_bars)
+                    has_drift_report = True
+                except Exception as e:
+                    logger.warning(f"Drift analysis failed: {e}")
+                    drift_report = None
+                    has_drift_report = False
+
+                progress2.update(
+                    drift_task,
+                    completed=100,
+                    total=100,
+                    description="[green]Drift analysis complete",
+                )
+
+                # Generate adaptive sync points
                 sync_task = progress2.add_task("[cyan]Generating sync points...", total=None)
                 detector = BeatDetector()
-                bar_count = modifier.get_bar_count()
                 sync_result = detector.generate_sync_points(
                     beat_info,
                     original_tempo=original_tempo,
                     sync_interval=16,
-                    max_bars=bar_count if bar_count > 0 else None,
+                    max_bars=max_bars,
+                    adaptive=True,  # Use adaptive tempo sync
                 )
 
                 # Convert to XML modifier format
@@ -465,11 +577,26 @@ def run_pipeline():
                     sync_task,
                     completed=100,
                     total=100,
-                    description=f"[green]Generated {len(sync_points)} sync points",
+                    description=f"[green]Generated {len(sync_points)} adaptive sync points",
                 )
 
+            # Display drift report outside progress context
+            if has_drift_report and drift_report:
+                console.print()
+                display_drift_report(drift_report)
+                console.print()
+
+            # Continue with XML injection
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress3:
+
                 # Inject into XML
-                xml_task = progress2.add_task("[cyan]Modifying GP file...", total=None)
+                xml_task = progress3.add_task("[cyan]Modifying GP file...", total=None)
 
                 # Create asset info
                 asset_info = AssetInfo(
@@ -498,16 +625,24 @@ def run_pipeline():
                 target_audio_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(audio_info.file_path, target_audio_path)
 
-                progress2.update(
+                progress3.update(
                     xml_task, completed=100, total=100, description="[green]GP file modified"
                 )
 
                 # Repackage
-                repack_task = progress2.add_task("[cyan]Repackaging...", total=None)
+                repack_task = progress3.add_task("[cyan]Repackaging...", total=None)
                 gp_file.repackage(output_path)
-                progress2.update(
+                progress3.update(
                     repack_task, completed=100, total=100, description="[green]File saved"
                 )
+
+        # Save troubleshooting copies
+        troubleshoot_dir = get_troubleshooting_dir()
+        gp_copy, mp3_copy = save_troubleshooting_copies(
+            output_path,
+            audio_info.file_path,
+            troubleshoot_dir,
+        )
 
         # Success!
         console.print()
@@ -518,7 +653,8 @@ def run_pipeline():
                 f"[dim]Detected BPM: {beat_info.bpm:.1f}\n"
                 f"Sync points: {len(sync_points)}\n"
                 f"Original tempo: {original_tempo:.1f}\n"
-                f"Audio offset: {sync_result.first_beat_time:.3f}s[/dim]",
+                f"Audio offset: {sync_result.first_beat_time:.3f}s[/dim]\n\n"
+                f"[dim]Troubleshooting copies saved to:\n{troubleshoot_dir}[/dim]",
                 title="Complete",
                 border_style="green",
             )
