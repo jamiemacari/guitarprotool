@@ -291,7 +291,7 @@ Run with: `python -m guitarprotool` or `guitarprotool` (if installed)
 ## Known Issues & Next Steps
 
 ### Test Suite
-- `tests/test_beat_detector.py` needs updating to mock librosa instead of aubio
+- ✅ `tests/test_beat_detector.py` updated to mock librosa (was aubio)
 - `tests/test_audio_processor.py` may have pydub/audioop issues on Python 3.13+
 
 ### Python Compatibility
@@ -303,21 +303,82 @@ Run with: `python -m guitarprotool` or `guitarprotool` (if installed)
 - Replaced `aubio` with `librosa` for beat detection (better Python/NumPy compatibility)
 - `librosa` is larger but more actively maintained
 
-## Planned Enhancement: Adaptive Tempo Sync
+## Adaptive Tempo Sync - IMPLEMENTED
 
-**Status:** Planned (see `docs/ADAPTIVE_TEMPO_SYNC_PLAN.md`)
+**Status:** ✅ Implemented with frame offset fix
 **Branch:** `feature/adaptive-tempo-sync`
 
-**Problem:** Current sync point generation sets `modified_tempo = original_tempo` for all sync points. This causes drift accumulation for recordings with tempo variation - the start syncs well but alignment degrades over time.
+### What's Implemented
+- ✅ `DriftAnalyzer` class in `src/guitarprotool/core/drift_analyzer.py`
+- ✅ `adaptive` parameter in `BeatDetector.generate_sync_points()` (default True)
+- ✅ Tempo correction for double/half-time detection (`BeatDetector.correct_tempo_multiple()`)
+- ✅ Drift report file output (`{output}_drift_report.txt`)
+- ✅ Debug beat data output (`{output}_debug_beats.txt`) for diagnosing beat detection issues
+- ✅ Drift report shows which bars have sync points (`<<SYNC` marker)
+- ✅ CLI displays tempo correction when applied
+- ✅ **Frame offsets now use actual detected beat times** (fixed drift issue)
 
-**Solution:** Implement adaptive tempo sync that:
-1. Calculates local BPM from detected beat intervals at each sync point position
-2. Places sync points adaptively - more frequent where drift > 2%, sparse where stable
-3. Generates a drift report showing detected vs expected tempo
+### Current Thresholds (in `drift_analyzer.py`)
+```python
+DRIFT_THRESHOLD_PERCENT = 0.5  # Place sync point if drift exceeds this
+MIN_SYNC_INTERVAL = 1          # Minimum bars between sync points
+MAX_SYNC_INTERVAL = 8          # Maximum bars between sync points
+```
 
-**Key Changes:**
-- New `DriftAnalyzer` class in `src/guitarprotool/core/drift_analyzer.py`
-- Add `adaptive` parameter to `BeatDetector.generate_sync_points()`
-- Display drift report in CLI after sync point generation
+### Recent Fixes (Dec 2024)
+1. ✅ **Frame offset calculation fixed** - Now uses actual detected beat times instead of expected times based on tab tempo. This ensures sync points align with where beats actually occur in the audio, not where they "should" be according to the tab.
 
-See `docs/ADAPTIVE_TEMPO_SYNC_PLAN.md` for full implementation details.
+2. ✅ **Debug beat data output** - New `DriftAnalyzer.write_debug_beats()` method outputs detailed beat-by-beat timing data including:
+   - Beat times (absolute and relative to first beat)
+   - Instantaneous BPM between each beat
+   - Bar and beat-in-bar positions
+   - Interval statistics (avg, std dev, min, max)
+
+3. ✅ **Test coverage expanded** - Added tests for:
+   - Frame offset using actual beat times with drifting tempo
+   - Frame offset extrapolation beyond detected beats
+   - Debug beat data output
+
+### How Frame Offset Calculation Works Now
+Frame offsets and FramePadding work together to align audio with the tab:
+
+1. **FramePadding** (in `beat_detector.py`): Negative offset that shifts audio left
+   ```python
+   frame_padding = -int(first_beat_time * sample_rate)
+   ```
+
+2. **FrameOffset** (in `drift_analyzer.py`): Relative position from first beat
+   ```python
+   relative_time = beat_times[beat_index] - first_beat_time
+   return int(relative_time * sample_rate)  # Bar 0 = 0
+   ```
+
+**Result:** Bar 0 starts at FrameOffset=0, FramePadding shifts audio so the first detected beat aligns with bar 0.
+
+### Audio Sync Fixes (Dec 2024)
+
+**Investigation #1 - False first onset detection:**
+- Fix: Added first beat validation in `BeatDetector.analyze()` to skip false onsets
+
+**Investigation #2 - Audio starting at wrong position (Dec 12-13):**
+- Problem: audio50.gp had good sync but wrong start; audio70.gp had good start but broke sync
+- Root cause: FramePadding and FrameOffset must BOTH change together
+- Comparison with user-corrected file revealed the pattern:
+  ```
+  audio50:     FramePadding=0,      Bar0=21504, Bar1=162304 (absolute)
+  audio70:     FramePadding=-21504, Bar0=21504, Bar1=162304 (mixed = broken!)
+  corrected:   FramePadding=-22200, Bar0=0,     Bar1=140104 (both relative)
+  ```
+- Fix: FramePadding = negative first beat time, FrameOffset = relative to first beat
+
+**Current settings:**
+- ✅ **FramePadding = -first_beat_time** - Shifts audio left to align with bar 0
+- ✅ **Relative frame offsets** - Bar 0 = 0, subsequent bars relative to first beat
+- ✅ **FramesPerPixel = 1274** - Matches typical GP8 files
+
+### Remaining TODO (if sync issues persist)
+1. **Add manual first beat offset** - Let user specify exact first beat time via CLI `--first-beat-offset` option
+2. **Investigate edge cases** - Some audio may need additional validation logic for first beat detection
+3. **Consider percussive separation** - For complex audio, separating drums might improve beat detection
+
+See `docs/ADAPTIVE_TEMPO_SYNC_PLAN.md` for original implementation plan.

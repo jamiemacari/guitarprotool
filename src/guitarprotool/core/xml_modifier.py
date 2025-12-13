@@ -409,7 +409,7 @@ class XMLModifier:
         self._add_element(backing_track, "AssetId", str(config.asset_id))
         self._add_element(backing_track, "YouTubeVideoUrl", "")
         self._add_element(backing_track, "Filter", "6")
-        self._add_element(backing_track, "FramesPerPixel", "100")
+        self._add_element(backing_track, "FramesPerPixel", "1274")
         self._add_element(backing_track, "FramePadding", str(config.frame_padding))
         self._add_element(backing_track, "Semitones", str(config.semitones))
         self._add_element(backing_track, "Cents", str(config.cents))

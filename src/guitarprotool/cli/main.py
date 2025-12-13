@@ -500,10 +500,22 @@ def run_pipeline():
                     f"No tempo found in GP file, using detected BPM: {original_tempo:.1f}"
                 )
 
+            # Correct for double/half-time detection
+            original_detected_bpm = beat_info.bpm
+            beat_info = BeatDetector.correct_tempo_multiple(beat_info, original_tempo)
+            tempo_corrected = beat_info.bpm != original_detected_bpm
+
             # Display beat info
             progress.stop()
             console.print()
             display_beat_info(beat_info)
+
+            if tempo_corrected:
+                console.print(
+                    f"[yellow]Note:[/yellow] Tempo corrected from {original_detected_bpm:.1f} "
+                    f"to {beat_info.bpm:.1f} BPM (reference tempo: {original_tempo:.1f})"
+                )
+                console.print()
 
             # Option to manually override BPM
             manual_bpm = get_manual_bpm()
@@ -539,6 +551,10 @@ def run_pipeline():
                         beats_per_bar=4,
                     )
                     drift_report = analyzer.analyze(max_bars=max_bars)
+                    # Add tempo correction info to report
+                    drift_report.tempo_corrected = tempo_corrected
+                    drift_report.original_detected_bpm = original_detected_bpm
+                    drift_report.corrected_bpm = beat_info.bpm
                     has_drift_report = True
                 except Exception as e:
                     logger.warning(f"Drift analysis failed: {e}")
@@ -580,10 +596,24 @@ def run_pipeline():
                     description=f"[green]Generated {len(sync_points)} adaptive sync points",
                 )
 
-            # Display drift report outside progress context
+            # Display drift report outside progress context and write to file
+            drift_report_path = None
             if has_drift_report and drift_report:
+                # Add sync point bar numbers to the report
+                drift_report.bars_with_sync_points = [sp.bar for sp in sync_result.sync_points]
+
                 console.print()
                 display_drift_report(drift_report)
+
+                # Write drift report to file (next to output file)
+                drift_report_path = output_path.parent / f"{output_path.stem}_drift_report.txt"
+                drift_report.write_to_file(str(drift_report_path))
+                console.print(f"[dim]Drift report saved to: {drift_report_path.name}[/dim]")
+
+                # Write debug beat data (useful for diagnosing beat detection issues)
+                debug_beats_path = output_path.parent / f"{output_path.stem}_debug_beats.txt"
+                analyzer.write_debug_beats(str(debug_beats_path))
+                console.print(f"[dim]Debug beat data saved to: {debug_beats_path.name}[/dim]")
                 console.print()
 
             # Continue with XML injection

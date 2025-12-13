@@ -86,6 +86,9 @@ class DriftReport:
         bars_with_significant_drift: Bars with >= MODERATE drift
         tempo_stability_score: 0.0-1.0 score (higher = more stable)
         recommended_sync_interval: Suggested bar interval for sync points
+        tempo_corrected: Whether tempo correction was applied
+        original_detected_bpm: Originally detected BPM before correction
+        corrected_bpm: BPM after correction (same as original if no correction)
     """
 
     bar_drifts: List[BarDriftInfo]
@@ -96,6 +99,17 @@ class DriftReport:
     bars_with_significant_drift: List[int]
     tempo_stability_score: float
     recommended_sync_interval: int
+    # Tempo correction info (optional, with defaults for backward compatibility)
+    tempo_corrected: bool = False
+    original_detected_bpm: Optional[float] = None
+    corrected_bpm: Optional[float] = None
+    # Sync point placement info
+    bars_with_sync_points: List[int] = None  # type: ignore
+
+    def __post_init__(self):
+        """Initialize default values for mutable fields."""
+        if self.bars_with_sync_points is None:
+            self.bars_with_sync_points = []
 
     def get_summary_lines(self) -> List[str]:
         """Return formatted summary lines for CLI display."""
@@ -106,9 +120,99 @@ class DriftReport:
             f"Stability score: {self.tempo_stability_score:.0%}",
             f"Recommended sync interval: every {self.recommended_sync_interval} bar(s)",
         ]
+        if self.tempo_corrected and self.original_detected_bpm and self.corrected_bpm:
+            lines.append(
+                f"Tempo correction: {self.original_detected_bpm:.1f} -> {self.corrected_bpm:.1f} BPM"
+            )
         if self.bars_with_significant_drift:
             lines.append(f"Bars needing attention: {len(self.bars_with_significant_drift)}")
         return lines
+
+    def write_to_file(self, file_path: str) -> None:
+        """Write detailed drift report to a file.
+
+        Args:
+            file_path: Path to write the report file
+        """
+        from pathlib import Path
+
+        output_path = Path(file_path)
+
+        lines = [
+            "=" * 70,
+            "TEMPO DRIFT ANALYSIS REPORT",
+            "=" * 70,
+            "",
+        ]
+
+        # Add tempo correction section if applicable
+        if self.tempo_corrected and self.original_detected_bpm and self.corrected_bpm:
+            lines.extend([
+                "TEMPO CORRECTION APPLIED",
+                "-" * 40,
+                f"Original detected BPM: {self.original_detected_bpm:.1f}",
+                f"Corrected BPM:         {self.corrected_bpm:.1f}",
+                f"Correction type:       {'Half-time (doubled)' if self.corrected_bpm > self.original_detected_bpm else 'Double-time (halved)'}",
+                "",
+            ])
+        else:
+            lines.extend([
+                "TEMPO CORRECTION: None applied",
+                "-" * 40,
+                f"Detected BPM matches expected tempo range",
+                "",
+            ])
+
+        lines.extend([
+            "SUMMARY",
+            "-" * 40,
+        ])
+        lines.extend(self.get_summary_lines())
+        if self.bars_with_sync_points:
+            lines.append(f"Sync points placed: {len(self.bars_with_sync_points)} bars")
+        lines.extend([
+            "",
+            "=" * 70,
+            "BAR-BY-BAR DRIFT ANALYSIS",
+            "=" * 70,
+            "",
+            f"{'Bar':>6} | {'Expected':>10} | {'Actual':>10} | {'Local BPM':>10} | "
+            f"{'Drift %':>10} | {'Severity':>12} | {'Sync':>6}",
+            "-" * 80,
+        ])
+
+        sync_point_set = set(self.bars_with_sync_points) if self.bars_with_sync_points else set()
+        for drift in self.bar_drifts:
+            has_sync = "<<SYNC" if drift.bar in sync_point_set else ""
+            lines.append(
+                f"{drift.bar:>6} | {drift.expected_time:>10.3f} | {drift.actual_time:>10.3f} | "
+                f"{drift.local_tempo:>10.2f} | {drift.drift_percent:>+10.2f} | "
+                f"{drift.severity.value:>12} | {has_sync}"
+            )
+
+        lines.extend([
+            "",
+            "=" * 70,
+            "LEGEND",
+            "-" * 40,
+            "Expected: Time in seconds based on tab tempo",
+            "Actual: Time in seconds from detected beats",
+            "Local BPM: Detected tempo at this bar position",
+            f"Tab BPM: {self.bar_drifts[0].original_tempo if self.bar_drifts else 'N/A'}",
+            "Sync: <<SYNC indicates a sync point was placed at this bar",
+            "",
+            "Severity Levels:",
+            "  STABLE:      < 1% drift",
+            "  MINOR:       1-3% drift",
+            "  MODERATE:    3-5% drift",
+            "  SIGNIFICANT: 5-10% drift",
+            "  SEVERE:      > 10% drift",
+            "",
+            "=" * 70,
+        ])
+
+        output_path.write_text("\n".join(lines))
+        logger.info(f"Drift report written to: {output_path}")
 
 
 class DriftAnalyzer:
@@ -133,9 +237,9 @@ class DriftAnalyzer:
     DEFAULT_SAMPLE_RATE = 44100
 
     # Thresholds for adaptive sync point placement
-    DRIFT_THRESHOLD_PERCENT = 2.0  # Add sync point if drift exceeds this
-    MIN_SYNC_INTERVAL = 2  # Minimum bars between sync points
-    MAX_SYNC_INTERVAL = 16  # Maximum bars between sync points
+    DRIFT_THRESHOLD_PERCENT = 0.5  # Add sync point if drift exceeds this (tighter = more sync points)
+    MIN_SYNC_INTERVAL = 1  # Minimum bars between sync points
+    MAX_SYNC_INTERVAL = 8  # Maximum bars between sync points (more frequent baseline)
 
     def __init__(
         self,
@@ -371,6 +475,88 @@ class DriftAnalyzer:
         logger.success(f"Generated {len(sync_points)} adaptive sync points")
         return sync_points
 
+    def write_debug_beats(self, file_path: str) -> None:
+        """Write detailed beat detection data for debugging.
+
+        Outputs raw beat times, intervals, and calculated BPMs for each beat.
+        This is useful for diagnosing beat detection accuracy issues.
+
+        Args:
+            file_path: Path to write the debug file
+        """
+        from pathlib import Path
+
+        output_path = Path(file_path)
+        lines = [
+            "=" * 80,
+            "BEAT DETECTION DEBUG DATA",
+            "=" * 80,
+            "",
+            f"Original tempo (from tab): {self.original_tempo:.2f} BPM",
+            f"Expected beat interval: {self.expected_beat_interval:.4f}s",
+            f"First beat time: {self.first_beat_time:.4f}s",
+            f"Total beats detected: {len(self.beat_times)}",
+            "",
+            "=" * 80,
+            "BEAT-BY-BEAT DATA",
+            "=" * 80,
+            "",
+            f"{'Beat':>6} | {'Time (s)':>12} | {'Rel Time':>12} | {'Interval':>10} | "
+            f"{'Inst BPM':>10} | {'Bar':>6} | {'Beat in Bar':>12}",
+            "-" * 90,
+        ]
+
+        prev_time = None
+        for i, beat_time in enumerate(self.beat_times):
+            rel_time = beat_time - self.first_beat_time
+            bar = i // self.beats_per_bar
+            beat_in_bar = i % self.beats_per_bar
+
+            if prev_time is not None:
+                interval = beat_time - prev_time
+                inst_bpm = 60.0 / interval if interval > 0 else 0
+                interval_str = f"{interval:.4f}"
+                bpm_str = f"{inst_bpm:.2f}"
+            else:
+                interval_str = "-"
+                bpm_str = "-"
+
+            lines.append(
+                f"{i:>6} | {beat_time:>12.4f} | {rel_time:>12.4f} | {interval_str:>10} | "
+                f"{bpm_str:>10} | {bar:>6} | {beat_in_bar:>12}"
+            )
+            prev_time = beat_time
+
+        # Add summary statistics
+        if len(self.beat_times) >= 2:
+            intervals = np.diff(self.beat_times)
+            avg_interval = np.mean(intervals)
+            std_interval = np.std(intervals)
+            min_interval = np.min(intervals)
+            max_interval = np.max(intervals)
+            avg_bpm = 60.0 / avg_interval if avg_interval > 0 else 0
+
+            lines.extend([
+                "",
+                "=" * 80,
+                "INTERVAL STATISTICS",
+                "=" * 80,
+                "",
+                f"Average interval: {avg_interval:.4f}s (= {avg_bpm:.2f} BPM)",
+                f"Std deviation: {std_interval:.4f}s",
+                f"Min interval: {min_interval:.4f}s (= {60/min_interval:.2f} BPM)",
+                f"Max interval: {max_interval:.4f}s (= {60/max_interval:.2f} BPM)",
+                f"Interval variance: {(max_interval - min_interval):.4f}s",
+                "",
+                f"Expected interval: {self.expected_beat_interval:.4f}s (from tab tempo)",
+                f"Deviation from expected: {(avg_interval - self.expected_beat_interval):.4f}s "
+                f"({((avg_interval - self.expected_beat_interval) / self.expected_beat_interval * 100):.2f}%)",
+                "",
+            ])
+
+        output_path.write_text("\n".join(lines))
+        logger.info(f"Debug beat data written to: {output_path}")
+
     def _find_sync_point_positions(
         self,
         max_bars: int,
@@ -422,15 +608,35 @@ class DriftAnalyzer:
     def _calculate_frame_offset_for_bar(self, bar: int) -> int:
         """Calculate audio frame offset for a given bar.
 
-        Frame offsets are relative to the first beat (bar 0 = frame 0),
-        calculated based on the original tempo (expected timing).
+        Frame offsets are RELATIVE to the first detected beat. Combined with
+        the negative FramePadding (set in beat_detector.py), this aligns the
+        audio so that bar 0 starts at the first beat of the music.
+
+        The relationship is:
+        - FramePadding = -first_beat_time (shifts audio left)
+        - FrameOffset = time_relative_to_first_beat (where each bar lands)
+        - Result: Bar 0 at FrameOffset=0 aligns with first beat in audio
 
         Args:
             bar: Bar number (0-indexed)
 
         Returns:
-            Frame offset (samples at 44.1kHz)
+            Frame offset (samples at 44.1kHz, relative to first beat)
         """
-        # Calculate time position relative to first beat based on original tempo
-        relative_time = bar * self.expected_bar_duration
-        return int(relative_time * self.sample_rate)
+        # Find the beat index for this bar
+        beat_index = bar * self.beats_per_bar
+
+        if beat_index < len(self.beat_times):
+            # Calculate time RELATIVE to first beat (bar 0 = 0)
+            relative_time = self.beat_times[beat_index] - self.first_beat_time
+            return int(relative_time * self.sample_rate)
+        else:
+            # Beyond detected beats - extrapolate from last known beat
+            last_beat_idx = len(self.beat_times) - 1
+            last_beat_time = self.beat_times[last_beat_idx]
+            beats_beyond = beat_index - last_beat_idx
+
+            # Use expected interval for extrapolation
+            extra_time = beats_beyond * self.expected_beat_interval
+            relative_time = (last_beat_time - self.first_beat_time) + extra_time
+            return int(relative_time * self.sample_rate)
