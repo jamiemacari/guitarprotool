@@ -9,6 +9,7 @@ Provides an interactive command-line interface for:
 
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -202,6 +203,46 @@ def confirm_overwrite(path: Path) -> bool:
         ).ask()
         or False
     )
+
+
+def get_troubleshooting_dir() -> Path:
+    """Get the directory for saving troubleshooting copies.
+
+    Creates a timestamped subdirectory under 'files/' in the project root.
+
+    Returns:
+        Path to the troubleshooting directory
+    """
+    # Use current working directory's 'files' folder
+    base_dir = Path.cwd() / "files"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    troubleshoot_dir = base_dir / f"run_{timestamp}"
+    troubleshoot_dir.mkdir(parents=True, exist_ok=True)
+    return troubleshoot_dir
+
+
+def save_troubleshooting_copies(
+    output_gp_path: Path,
+    audio_path: Path,
+    troubleshoot_dir: Path,
+) -> tuple[Path, Path]:
+    """Save copies of the GP file and MP3 for troubleshooting.
+
+    Args:
+        output_gp_path: Path to the final GP file
+        audio_path: Path to the processed MP3 file
+        troubleshoot_dir: Directory to save copies to
+
+    Returns:
+        Tuple of (gp_copy_path, mp3_copy_path)
+    """
+    gp_copy_path = troubleshoot_dir / output_gp_path.name
+    mp3_copy_path = troubleshoot_dir / audio_path.name
+
+    shutil.copy2(output_gp_path, gp_copy_path)
+    shutil.copy2(audio_path, mp3_copy_path)
+
+    return gp_copy_path, mp3_copy_path
 
 
 def process_audio(
@@ -595,6 +636,14 @@ def run_pipeline():
                     repack_task, completed=100, total=100, description="[green]File saved"
                 )
 
+        # Save troubleshooting copies
+        troubleshoot_dir = get_troubleshooting_dir()
+        gp_copy, mp3_copy = save_troubleshooting_copies(
+            output_path,
+            audio_info.file_path,
+            troubleshoot_dir,
+        )
+
         # Success!
         console.print()
         console.print(
@@ -604,7 +653,8 @@ def run_pipeline():
                 f"[dim]Detected BPM: {beat_info.bpm:.1f}\n"
                 f"Sync points: {len(sync_points)}\n"
                 f"Original tempo: {original_tempo:.1f}\n"
-                f"Audio offset: {sync_result.first_beat_time:.3f}s[/dim]",
+                f"Audio offset: {sync_result.first_beat_time:.3f}s[/dim]\n\n"
+                f"[dim]Troubleshooting copies saved to:\n{troubleshoot_dir}[/dim]",
                 title="Complete",
                 border_style="green",
             )
