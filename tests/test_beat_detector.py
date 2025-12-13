@@ -1,16 +1,10 @@
 """Tests for beat_detector module."""
 
-import sys
 from unittest.mock import patch, MagicMock
 
 import pytest
 import numpy as np
 
-# Mock aubio before importing beat_detector
-mock_aubio = MagicMock()
-sys.modules["aubio"] = mock_aubio
-
-# ruff: noqa: E402
 from guitarprotool.core.beat_detector import (
     BeatDetector,
     BeatInfo,
@@ -26,51 +20,6 @@ def beat_detector():
     return BeatDetector()
 
 
-@pytest.fixture
-def mock_aubio_source():
-    """Create a mock aubio source that returns audio data."""
-    mock_source = MagicMock()
-    mock_source.duration = 220500  # 5 seconds at 44100Hz
-    mock_source.samplerate = 44100
-
-    # Simulate reading audio in chunks
-    chunks = []
-    hop_s = 512
-    total_samples = mock_source.duration
-    for i in range(0, total_samples, hop_s):
-        remaining = min(hop_s, total_samples - i)
-        samples = np.zeros(hop_s, dtype=np.float32)
-        chunks.append((samples, remaining if remaining < hop_s else hop_s))
-
-    # Add final chunk with less than hop_s samples
-    chunks.append((np.zeros(hop_s, dtype=np.float32), 0))
-
-    mock_source.side_effect = chunks
-    mock_source.__call__ = MagicMock(side_effect=chunks)
-
-    return mock_source
-
-
-@pytest.fixture
-def mock_aubio_tempo():
-    """Create a mock aubio tempo detector."""
-    mock_tempo = MagicMock()
-
-    # Track call count to simulate beat detection
-    call_count = [0]
-
-    def tempo_call(samples):
-        call_count[0] += 1
-        # Return beat every 21 calls (roughly every 0.5s at 512 hop)
-        return 1 if call_count[0] % 21 == 0 else 0
-
-    mock_tempo.side_effect = tempo_call
-    mock_tempo.__call__ = MagicMock(side_effect=tempo_call)
-    mock_tempo.get_bpm = MagicMock(return_value=120.0)
-
-    return mock_tempo
-
-
 class TestBeatDetectorInit:
     """Test BeatDetector initialization."""
 
@@ -79,8 +28,7 @@ class TestBeatDetectorInit:
         detector = BeatDetector()
 
         assert detector.sample_rate == 44100
-        assert detector.win_s == 1024
-        assert detector.hop_s == 512
+        assert detector.hop_length == 512
 
     def test_init_custom_sample_rate(self):
         """Test initialization with custom sample rate."""
@@ -88,25 +36,18 @@ class TestBeatDetectorInit:
 
         assert detector.sample_rate == 48000
 
-    def test_init_custom_window_size(self):
-        """Test initialization with custom window size."""
-        detector = BeatDetector(win_s=2048)
+    def test_init_custom_hop_length(self):
+        """Test initialization with custom hop length."""
+        detector = BeatDetector(hop_length=256)
 
-        assert detector.win_s == 2048
-
-    def test_init_custom_hop_size(self):
-        """Test initialization with custom hop size."""
-        detector = BeatDetector(hop_s=256)
-
-        assert detector.hop_s == 256
+        assert detector.hop_length == 256
 
     def test_init_all_custom_parameters(self):
         """Test initialization with all custom parameters."""
-        detector = BeatDetector(sample_rate=22050, win_s=512, hop_s=128)
+        detector = BeatDetector(sample_rate=22050, hop_length=128)
 
         assert detector.sample_rate == 22050
-        assert detector.win_s == 512
-        assert detector.hop_s == 128
+        assert detector.hop_length == 128
 
 
 class TestAnalyze:
@@ -119,56 +60,34 @@ class TestAnalyze:
         with pytest.raises(FileNotFoundError):
             beat_detector.analyze(nonexistent)
 
-    @patch("guitarprotool.core.beat_detector.AUBIO_AVAILABLE", False)
-    def test_analyze_without_aubio(self, temp_dir):
-        """Test analyze raises error when aubio not available."""
+    @patch("guitarprotool.core.beat_detector.LIBROSA_AVAILABLE", False)
+    def test_analyze_without_librosa(self, temp_dir):
+        """Test analyze raises error when librosa not available."""
         # Create a dummy file
         audio_path = temp_dir / "test.wav"
         audio_path.write_bytes(b"dummy")
 
         detector = BeatDetector()
 
-        with pytest.raises(BeatDetectionError, match="aubio library not available"):
+        with pytest.raises(BeatDetectionError, match="librosa library not available"):
             detector.analyze(audio_path)
 
-    @patch("guitarprotool.core.beat_detector.AUBIO_AVAILABLE", True)
-    @patch("guitarprotool.core.beat_detector.aubio")
-    def test_analyze_returns_beat_info(self, mock_aubio_module, temp_dir):
+    @patch("guitarprotool.core.beat_detector.LIBROSA_AVAILABLE", True)
+    @patch("guitarprotool.core.beat_detector.librosa")
+    def test_analyze_returns_beat_info(self, mock_librosa, temp_dir):
         """Test that analyze returns BeatInfo."""
         # Create dummy file
         audio_path = temp_dir / "test.wav"
         audio_path.write_bytes(b"dummy audio data")
 
-        # Setup mock source
-        mock_source = MagicMock()
-        mock_source.duration = 220500
-        mock_source.samplerate = 44100
-
-        call_count = [0]
-
-        def source_call():
-            call_count[0] += 1
-            if call_count[0] > 100:
-                return (np.zeros(512, dtype=np.float32), 0)
-            return (np.zeros(512, dtype=np.float32), 512)
-
-        mock_source.side_effect = source_call
-        mock_source.__call__ = MagicMock(side_effect=source_call)
-
-        # Setup mock tempo
-        mock_tempo = MagicMock()
-        beat_count = [0]
-
-        def tempo_call(samples):
-            beat_count[0] += 1
-            return 1 if beat_count[0] % 21 == 0 else 0
-
-        mock_tempo.side_effect = tempo_call
-        mock_tempo.__call__ = MagicMock(side_effect=tempo_call)
-        mock_tempo.get_bpm = MagicMock(return_value=120.0)
-
-        mock_aubio_module.source.return_value = mock_source
-        mock_aubio_module.tempo.return_value = mock_tempo
+        # Setup mock librosa
+        mock_librosa.load.return_value = (np.zeros(44100, dtype=np.float32), 44100)
+        mock_librosa.beat.beat_track.return_value = (
+            np.array([120.0]),  # tempo
+            np.array([0, 21, 42, 63, 84]),  # beat frames
+        )
+        mock_librosa.onset.onset_detect.return_value = np.array([0, 21, 42, 63, 84])
+        mock_librosa.frames_to_time.return_value = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
 
         detector = BeatDetector()
         result = detector.analyze(audio_path)
@@ -176,42 +95,21 @@ class TestAnalyze:
         assert isinstance(result, BeatInfo)
         assert result.bpm > 0
 
-    @patch("guitarprotool.core.beat_detector.AUBIO_AVAILABLE", True)
-    @patch("guitarprotool.core.beat_detector.aubio")
-    def test_analyze_with_progress_callback(self, mock_aubio_module, temp_dir):
+    @patch("guitarprotool.core.beat_detector.LIBROSA_AVAILABLE", True)
+    @patch("guitarprotool.core.beat_detector.librosa")
+    def test_analyze_with_progress_callback(self, mock_librosa, temp_dir):
         """Test analyze with progress callback."""
         audio_path = temp_dir / "test.wav"
         audio_path.write_bytes(b"dummy")
 
-        # Setup mocks
-        mock_source = MagicMock()
-        mock_source.duration = 44100
-        mock_source.samplerate = 44100
-
-        call_count = [0]
-
-        def source_call():
-            call_count[0] += 1
-            if call_count[0] > 50:
-                return (np.zeros(512, dtype=np.float32), 0)
-            return (np.zeros(512, dtype=np.float32), 512)
-
-        mock_source.side_effect = source_call
-        mock_source.__call__ = MagicMock(side_effect=source_call)
-
-        mock_tempo = MagicMock()
-        beat_count = [0]
-
-        def tempo_call(samples):
-            beat_count[0] += 1
-            return 1 if beat_count[0] % 10 == 0 else 0
-
-        mock_tempo.side_effect = tempo_call
-        mock_tempo.__call__ = MagicMock(side_effect=tempo_call)
-        mock_tempo.get_bpm = MagicMock(return_value=120.0)
-
-        mock_aubio_module.source.return_value = mock_source
-        mock_aubio_module.tempo.return_value = mock_tempo
+        # Setup mock librosa
+        mock_librosa.load.return_value = (np.zeros(44100, dtype=np.float32), 44100)
+        mock_librosa.beat.beat_track.return_value = (
+            np.array([120.0]),
+            np.array([0, 21, 42, 63, 84]),
+        )
+        mock_librosa.onset.onset_detect.return_value = np.array([0, 21, 42, 63, 84])
+        mock_librosa.frames_to_time.return_value = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
 
         progress_values = []
 
@@ -236,53 +134,30 @@ class TestDetectBPM:
         with pytest.raises(FileNotFoundError):
             beat_detector.detect_bpm(nonexistent)
 
-    @patch("guitarprotool.core.beat_detector.AUBIO_AVAILABLE", False)
-    def test_detect_bpm_without_aubio(self, temp_dir):
-        """Test detect_bpm raises error when aubio not available."""
+    @patch("guitarprotool.core.beat_detector.LIBROSA_AVAILABLE", False)
+    def test_detect_bpm_without_librosa(self, temp_dir):
+        """Test detect_bpm raises error when librosa not available."""
         audio_path = temp_dir / "test.wav"
         audio_path.write_bytes(b"dummy")
 
         detector = BeatDetector()
 
-        with pytest.raises(BPMDetectionError, match="aubio library not available"):
+        with pytest.raises(BPMDetectionError, match="librosa library not available"):
             detector.detect_bpm(audio_path)
 
-    @patch("guitarprotool.core.beat_detector.AUBIO_AVAILABLE", True)
-    @patch("guitarprotool.core.beat_detector.aubio")
-    def test_detect_bpm_returns_float(self, mock_aubio_module, temp_dir):
+    @patch("guitarprotool.core.beat_detector.LIBROSA_AVAILABLE", True)
+    @patch("guitarprotool.core.beat_detector.librosa")
+    def test_detect_bpm_returns_float(self, mock_librosa, temp_dir):
         """Test that detect_bpm returns a float."""
         audio_path = temp_dir / "test.wav"
         audio_path.write_bytes(b"dummy")
 
-        # Setup mocks
-        mock_source = MagicMock()
-        mock_source.duration = 44100
-        mock_source.samplerate = 44100
-
-        call_count = [0]
-
-        def source_call():
-            call_count[0] += 1
-            if call_count[0] > 50:
-                return (np.zeros(512, dtype=np.float32), 0)
-            return (np.zeros(512, dtype=np.float32), 512)
-
-        mock_source.side_effect = source_call
-        mock_source.__call__ = MagicMock(side_effect=source_call)
-
-        mock_tempo = MagicMock()
-        beat_count = [0]
-
-        def tempo_call(samples):
-            beat_count[0] += 1
-            return 1 if beat_count[0] % 10 == 0 else 0
-
-        mock_tempo.side_effect = tempo_call
-        mock_tempo.__call__ = MagicMock(side_effect=tempo_call)
-        mock_tempo.get_bpm = MagicMock(return_value=120.0)
-
-        mock_aubio_module.source.return_value = mock_source
-        mock_aubio_module.tempo.return_value = mock_tempo
+        # Setup mock librosa
+        mock_librosa.load.return_value = (np.zeros(44100, dtype=np.float32), 44100)
+        mock_librosa.beat.beat_track.return_value = (
+            np.array([120.0]),
+            np.array([0, 21, 42, 63, 84]),
+        )
 
         detector = BeatDetector()
         bpm = detector.detect_bpm(audio_path)
@@ -382,10 +257,12 @@ class TestGenerateSyncPoints:
             start_offset=1.0,  # Additional offset of 1 second
         )
 
-        # Frame offset for bar 0 should still be 0 (relative)
-        # But frame_padding should be more negative due to offset
+        # Bar 0 frame_offset is absolute position of first beat (0.0s = 0 frames)
         assert result.sync_points[0].frame_offset == 0
-        # With first beat at 0.0s + 1.0s offset, frame_padding should be -44100
+        # first_beat_time includes the start_offset (0.0 + 1.0 = 1.0)
+        assert result.first_beat_time == 1.0
+        # frame_padding shifts audio to align bar 0 with first beat
+        # frame_padding = -int(first_beat_time * 44100) = -44100
         assert result.frame_padding == -44100
 
     def test_generate_sync_points_different_beats_per_bar(self, beat_detector):
@@ -415,17 +292,19 @@ class TestGenerateSyncPoints:
         assert len(result_4.sync_points) >= 1
 
     def test_generate_sync_points_frame_padding_with_late_start(self, beat_detector):
-        """Test frame_padding is calculated correctly for audio starting late."""
-        # Audio with music starting at 2 seconds
+        """Test frame_padding aligns audio when music starts late in the file."""
+        # Audio with music starting at 2 seconds (e.g., has intro/silence)
         beat_times = [2.0 + i * 0.5 for i in range(20)]
         beat_info = BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.9)
 
         result = beat_detector.generate_sync_points(beat_info, original_tempo=120.0)
 
-        # frame_padding should be negative, equal to -2.0 * 44100 = -88200
-        assert result.frame_padding == -88200
         assert result.first_beat_time == 2.0
-        # Bar 0 frame_offset should still be 0 (relative to first beat)
+        # frame_padding shifts audio so bar 0 aligns with first beat at 2.0s
+        # frame_padding = -int(2.0 * 44100) = -88200
+        assert result.frame_padding == -88200
+        # Bar 0 frame_offset is RELATIVE (0 = first beat position)
+        # Combined with frame_padding, this aligns bar 0 with the music start
         assert result.sync_points[0].frame_offset == 0
 
 
@@ -624,3 +503,52 @@ class TestEdgeCases:
         # Should still have at least one sync point (at bar 0)
         assert len(result.sync_points) >= 1
         assert result.sync_points[0].bar == 0
+
+
+class TestTempoCorrection:
+    """Test tempo correction for double/half-time detection."""
+
+    def test_correct_double_time(self):
+        """Test correction when detected BPM is double the reference."""
+        # Detected 240 BPM when reference is 120 (double-time)
+        beat_times = [i * 0.25 for i in range(20)]  # 240 BPM beats
+        beat_info = BeatInfo(bpm=240.0, beat_times=beat_times, confidence=0.9)
+
+        corrected = BeatDetector.correct_tempo_multiple(beat_info, reference_tempo=120.0)
+
+        assert corrected.bpm == pytest.approx(120.0)
+        # Should have half the beats (every other one)
+        assert len(corrected.beat_times) == len(beat_times) // 2
+
+    def test_correct_half_time(self):
+        """Test correction when detected BPM is half the reference."""
+        # Detected 60 BPM when reference is 120 (half-time)
+        beat_times = [i * 1.0 for i in range(10)]  # 60 BPM beats
+        beat_info = BeatInfo(bpm=60.0, beat_times=beat_times, confidence=0.9)
+
+        corrected = BeatDetector.correct_tempo_multiple(beat_info, reference_tempo=120.0)
+
+        assert corrected.bpm == pytest.approx(120.0)
+        # Should have roughly double the beats (interpolated)
+        assert len(corrected.beat_times) >= len(beat_times) * 2 - 1
+
+    def test_no_correction_needed(self):
+        """Test that no correction is applied when tempo is close to reference."""
+        beat_times = [i * 0.5 for i in range(20)]  # 120 BPM beats
+        beat_info = BeatInfo(bpm=120.0, beat_times=beat_times, confidence=0.9)
+
+        corrected = BeatDetector.correct_tempo_multiple(beat_info, reference_tempo=120.0)
+
+        # Should be unchanged
+        assert corrected.bpm == 120.0
+        assert len(corrected.beat_times) == len(beat_times)
+
+    def test_no_correction_for_slightly_different_tempo(self):
+        """Test that slight tempo differences don't trigger correction."""
+        beat_times = [i * 0.5 for i in range(20)]  # 120 BPM beats
+        beat_info = BeatInfo(bpm=125.0, beat_times=beat_times, confidence=0.9)
+
+        corrected = BeatDetector.correct_tempo_multiple(beat_info, reference_tempo=120.0)
+
+        # Should be unchanged (125/120 = 1.04, within tolerance)
+        assert corrected.bpm == 125.0
