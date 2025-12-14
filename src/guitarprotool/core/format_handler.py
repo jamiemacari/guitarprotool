@@ -196,6 +196,31 @@ class GPFileHandler:
         # Create GP8 structure
         self._create_gp8_from_gpx(files)
 
+    def _fix_gpx_xml(self, content: bytes) -> bytes:
+        """Fix known XML issues in GPX score.gpif files.
+
+        Some GPX files have malformed XML, such as:
+        - <Parameters>...</Params> (mismatched closing tag)
+
+        Args:
+            content: Raw XML content as bytes
+
+        Returns:
+            Fixed XML content as bytes
+        """
+        # Decode to string for manipulation
+        try:
+            xml_str = content.decode("utf-8")
+        except UnicodeDecodeError:
+            xml_str = content.decode("latin-1")
+
+        # Fix mismatched Parameters/Params tags
+        # Some GPX files have <Parameters>...</Params> instead of </Parameters>
+        xml_str = xml_str.replace("</Params>", "</Parameters>")
+
+        # Re-encode to bytes
+        return xml_str.encode("utf-8")
+
     def _create_gp8_from_gpx(self, files: dict[str, bytes]) -> None:
         """Create GP8 file structure from extracted GPX files.
 
@@ -217,6 +242,9 @@ class GPFileHandler:
 
         if gpif_content is None:
             raise FormatConversionError("No score.gpif found in GPX container")
+
+        # Fix known XML issues in GPX files
+        gpif_content = self._fix_gpx_xml(gpif_content)
 
         # Write score.gpif to root (GP8 structure)
         gpif_path = self._extract_dir / "score.gpif"
