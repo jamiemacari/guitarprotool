@@ -23,6 +23,12 @@ from loguru import logger
 
 from guitarprotool import __version__
 from guitarprotool.core.gp_file import GPFile
+from guitarprotool.core.format_handler import (
+    GPFileHandler,
+    GPFormat,
+    get_supported_extensions,
+    is_supported_format,
+)
 from guitarprotool.core.beat_detector import BeatDetector, BeatInfo, SyncResult
 from guitarprotool.core.drift_analyzer import DriftAnalyzer, DriftReport, DriftSeverity
 from guitarprotool.core.xml_modifier import (
@@ -35,6 +41,7 @@ from guitarprotool.utils.exceptions import (
     GuitarProToolError,
     AudioProcessingError,
     BeatDetectionError,
+    FormatConversionError,
 )
 
 # Try to import AudioProcessor - may fail on Python 3.14 due to pydub/audioop issue
@@ -66,13 +73,16 @@ custom_style = Style(
 
 def print_banner():
     """Display application banner."""
+    supported = ", ".join(get_supported_extensions())
     banner = """
 [bold cyan]Guitar Pro Audio Injection Tool[/bold cyan]
 [dim]v{version}[/dim]
 
-Inject YouTube audio into Guitar Pro 8 files with automatic sync points.
+Inject YouTube audio into Guitar Pro files with automatic sync points.
+[dim]Supports: {supported}[/dim]
     """.format(
-        version=__version__
+        version=__version__,
+        supported=supported,
     )
     console.print(Panel(banner.strip(), border_style="cyan"))
 
@@ -81,10 +91,11 @@ def get_gp_file_path() -> Optional[Path]:
     """Prompt user for Guitar Pro file path.
 
     Returns:
-        Path to .gp file or None if cancelled
+        Path to Guitar Pro file or None if cancelled
     """
+    supported = ", ".join(get_supported_extensions())
     result = questionary.path(
-        "Select Guitar Pro file (.gp):",
+        f"Select Guitar Pro file ({supported}):",
         only_directories=False,
         style=custom_style,
     ).ask()
@@ -98,8 +109,11 @@ def get_gp_file_path() -> Optional[Path]:
         console.print(f"[red]Error:[/red] File not found: {path}")
         return None
 
-    if path.suffix.lower() != ".gp":
-        console.print(f"[red]Error:[/red] Expected .gp file, got: {path.suffix}")
+    if not is_supported_format(path):
+        console.print(
+            f"[red]Error:[/red] Unsupported format: {path.suffix}\n"
+            f"[dim]Supported formats: {supported}[/dim]"
+        )
         return None
 
     return path
@@ -457,7 +471,7 @@ def run_pipeline():
     console.print("[bold]Step 5:[/bold] Processing...")
     console.print()
 
-    gp_file = None
+    handler = None
 
     try:
         with Progress(
@@ -468,16 +482,33 @@ def run_pipeline():
             console=console,
         ) as progress:
 
-            # Extract GP file
-            extract_task = progress.add_task("[cyan]Extracting GP file...", total=None)
-            gp_file = GPFile(gp_path)
-            temp_dir = gp_file.extract()
-            progress.update(
-                extract_task, completed=100, total=100, description="[green]GP file extracted"
-            )
+            # Initialize file handler and prepare for audio injection
+            handler = GPFileHandler(gp_path)
+            original_format = handler.format
+
+            if original_format != GPFormat.GP8:
+                extract_task = progress.add_task(
+                    f"[cyan]Converting {original_format.name} to GP8...", total=None
+                )
+            else:
+                extract_task = progress.add_task("[cyan]Extracting GP file...", total=None)
+
+            temp_dir = handler.prepare_for_audio_injection()
+
+            if original_format != GPFormat.GP8:
+                progress.update(
+                    extract_task,
+                    completed=100,
+                    total=100,
+                    description=f"[green]Converted from {original_format.name} to GP8",
+                )
+            else:
+                progress.update(
+                    extract_task, completed=100, total=100, description="[green]GP file extracted"
+                )
 
             # Process audio
-            audio_dir = gp_file.get_audio_dir()
+            audio_dir = handler.get_audio_dir()
             audio_info = process_audio(source_type, source_value, audio_dir, progress)
             if not audio_info:
                 raise AudioProcessingError("Failed to process audio")
@@ -488,7 +519,7 @@ def run_pipeline():
                 raise BeatDetectionError("Failed to detect beats")
 
             # Get original tempo from GP file
-            gpif_path = gp_file.get_gpif_path()
+            gpif_path = handler.get_gpif_path()
             modifier = XMLModifier(gpif_path)
             modifier.load()
             original_tempo = modifier.get_original_tempo()
@@ -661,7 +692,7 @@ def run_pipeline():
 
                 # Repackage
                 repack_task = progress3.add_task("[cyan]Repackaging...", total=None)
-                gp_file.repackage(output_path)
+                handler.save(output_path)
                 progress3.update(
                     repack_task, completed=100, total=100, description="[green]File saved"
                 )
@@ -690,6 +721,10 @@ def run_pipeline():
             )
         )
 
+    except FormatConversionError as e:
+        console.print(f"\n[red]Format conversion error:[/red] {e}")
+        logger.exception("Format conversion failed")
+
     except GuitarProToolError as e:
         console.print(f"\n[red]Error:[/red] {e}")
         logger.exception("Pipeline failed")
@@ -699,8 +734,8 @@ def run_pipeline():
         logger.exception("Unexpected error in pipeline")
 
     finally:
-        if gp_file:
-            gp_file.cleanup()
+        if handler:
+            handler.cleanup()
 
 
 def main_menu():

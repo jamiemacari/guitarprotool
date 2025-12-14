@@ -41,6 +41,30 @@ class GPRepackagingError(GPFileError):
     pass
 
 
+class FormatError(GPFileError):
+    """Base class for format-related errors."""
+
+    pass
+
+
+class BCFZDecompressionError(FormatError):
+    """Raised when BCFZ decompression fails."""
+
+    pass
+
+
+class FormatConversionError(FormatError):
+    """Raised when format conversion (e.g., GP5 to GP8) fails."""
+
+    pass
+
+
+class UnsupportedFormatError(FormatError):
+    """Raised when file format is not supported."""
+
+    pass
+
+
 class AudioProcessingError(GuitarProToolError):
     """Base class for errors during audio download/processing."""
 
