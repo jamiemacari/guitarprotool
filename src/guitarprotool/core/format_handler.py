@@ -246,23 +246,26 @@ class GPFileHandler:
         self._gp8_file.is_extracted = True
 
     def _prepare_legacy(self) -> None:
-        """Prepare a legacy GP3/GP4/GP5 file using pyguitarpro."""
+        """Prepare a legacy GP3/GP4/GP5 file.
+
+        Note: Full GP5→GP8 conversion is not yet supported because it requires
+        building the XML structure from scratch. For now, we raise a helpful error.
+        """
         logger.info(f"Preparing legacy file: {self.filepath} (format: {self.format.name})")
 
-        try:
-            import guitarpro
-        except ImportError:
-            raise FormatConversionError(
-                "pyguitarpro is required for GP3/GP4/GP5 files. "
-                "Install with: pip install pyguitarpro"
-            )
+        # GP5/GP4/GP3 → GP8 conversion is complex because:
+        # 1. pyguitarpro can read GP5 but only writes GP3/GP4/GP5, not GP8
+        # 2. GP8 uses XML (score.gpif) which has a different structure
+        # 3. Full conversion would require mapping all Song fields to XML
 
-        # Read the legacy file
-        logger.debug("Reading legacy GP file with pyguitarpro")
-        song = guitarpro.parse(str(self.filepath))
-
-        # Create GP8 structure from pyguitarpro Song object
-        self._create_gp8_from_song(song)
+        raise FormatConversionError(
+            f"Direct conversion from {self.format.name} to GP8 is not yet supported.\n\n"
+            f"Workaround: Open '{self.filepath.name}' in Guitar Pro 8, then:\n"
+            f"  1. File → Save As\n"
+            f"  2. Choose '.gp' format (Guitar Pro 8)\n"
+            f"  3. Use the saved .gp file with this tool\n\n"
+            f"Alternatively, if you have a .gpx version (GP6/GP7), that format is supported."
+        )
 
     def _create_gp8_from_song(self, song) -> None:
         """Create GP8 file structure from pyguitarpro Song object.

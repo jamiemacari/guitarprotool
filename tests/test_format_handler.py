@@ -283,18 +283,15 @@ class TestGPFileHandlerLegacy:
         assert handler.format == GPFormat.GP5
         assert handler.is_native_gp8 is False
 
-    def test_prepare_gp5_requires_pyguitarpro(self, sample_gp5_file):
-        """Test that GP5 handling requires pyguitarpro."""
+    def test_prepare_gp5_not_yet_supported(self, sample_gp5_file):
+        """Test that GP5 handling raises a helpful error."""
         handler = GPFileHandler(sample_gp5_file)
 
-        # This will either succeed (if pyguitarpro is installed)
-        # or fail with an appropriate error
-        try:
+        # GP5 → GP8 conversion is not yet supported
+        with pytest.raises(FormatConversionError) as exc_info:
             handler.prepare_for_audio_injection()
-            handler.cleanup()
-        except FormatConversionError as e:
-            # Expected if pyguitarpro not installed or file is invalid
-            assert "pyguitarpro" in str(e).lower() or "failed" in str(e).lower()
-        except Exception:
-            # Other errors are also acceptable for invalid test files
-            pass
+
+        # Should provide helpful instructions
+        error_msg = str(exc_info.value)
+        assert "not yet supported" in error_msg.lower()
+        assert "workaround" in error_msg.lower()

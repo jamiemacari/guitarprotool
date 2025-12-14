@@ -259,27 +259,24 @@ def extract_gpx_files(decompressed_data: bytes) -> dict[str, bytes]:
 
         filename = sector_data[8:filename_end].decode("utf-8", errors="replace")
 
-        # File metadata is at offset 128 from sector start (after 4-byte marker)
-        # Actually it's at a fixed offset within the entry
-        # Looking at the data: filename starts at +8, metadata at filename+120 or so
+        # File entry structure (based on reverse engineering):
+        # - Bytes 0-4: sector marker (0x00000000 or 0xFFFFFFFF)
+        # - Bytes 4-8: entry type (1=directory, 2=file)
+        # - Bytes 8-136: filename (128 bytes, null-padded)
+        # - Bytes 136-140: zeros
+        # - Bytes 140-144: flags or count
+        # - Bytes 144-148: file size (little-endian)
+        # - Bytes 148-152: zeros
+        # - Bytes 152+: sector number list (little-endian 32-bit each)
 
-        # Based on analysis: metadata starts at sector_offset + 132
-        # - 4 bytes: unknown (usually 0)
-        # - 4 bytes: sector count or flags
-        # - 4 bytes: file size
-        # - 4 bytes: padding
-        # - sector list follows
-
-        # The structure seems to be at fixed offset 132 from sector start
-        meta_offset = 132
-        if meta_offset + 12 > len(sector_data):
+        if len(sector_data) < 160:
             continue
 
-        # Read file size at offset 136 (132 + 4)
-        file_size = int.from_bytes(sector_data[136:140], "little")
+        # Read file size at offset 144
+        file_size = int.from_bytes(sector_data[144:148], "little")
 
-        # Sector list starts at offset 144
-        sector_list_offset = 144
+        # Sector list starts at offset 152
+        sector_list_offset = 152
         sectors_needed = (file_size + SECTOR_SIZE - 1) // SECTOR_SIZE
 
         # Read sector numbers
