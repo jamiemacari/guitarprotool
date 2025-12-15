@@ -217,9 +217,15 @@ class GPFileHandler:
         except UnicodeDecodeError:
             xml_str = content.decode("latin-1")
 
-        # Fix mismatched Parameters/Params tags
-        # Some GPX files have <Parameters>...</Params> instead of </Parameters>
+        # Fix mismatched/truncated tags found in GPX files
+        # These appear to be compression/encoding artifacts in some GPX files
         xml_str = xml_str.replace("</Params>", "</Parameters>")
+        xml_str = xml_str.replace("<Finge>", "<Fingering>")
+        xml_str = xml_str.replace("<Poon ", "<Position ")
+        xml_str = xml_str.replace("</AccialCount>", "</AccidentalCount>")
+        xml_str = xml_str.replace("</Prty>", "</Property>")
+        xml_str = xml_str.replace("</CleVoices>", "</Clef><Voices>")
+        xml_str = xml_str.replace("</Keyime>", "</Key><Time>")
 
         # Fix boolean attributes without values (with stray quote)
         # Pattern: space + attribute_name + " + /> (where there's no = before the ")
