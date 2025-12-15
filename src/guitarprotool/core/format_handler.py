@@ -226,6 +226,7 @@ class GPFileHandler:
         xml_str = xml_str.replace("</Prty>", "</Property>")
         xml_str = xml_str.replace("</CleVoices>", "</Clef><Voices>")
         xml_str = xml_str.replace("</Keyime>", "</Key><Time>")
+        xml_str = xml_str.replace("</IteItem", "</Item><Item")
 
         # Fix boolean attributes without values (with stray quote)
         # Pattern: space + attribute_name + " + /> (where there's no = before the ")
