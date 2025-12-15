@@ -201,6 +201,7 @@ class GPFileHandler:
 
         Some GPX files have malformed XML, such as:
         - <Parameters>...</Params> (mismatched closing tag)
+        - Boolean attributes without values (e.g., accidentNatural"/>)
 
         Args:
             content: Raw XML content as bytes
@@ -208,6 +209,8 @@ class GPFileHandler:
         Returns:
             Fixed XML content as bytes
         """
+        import re
+
         # Decode to string for manipulation
         try:
             xml_str = content.decode("utf-8")
@@ -217,6 +220,21 @@ class GPFileHandler:
         # Fix mismatched Parameters/Params tags
         # Some GPX files have <Parameters>...</Params> instead of </Parameters>
         xml_str = xml_str.replace("</Params>", "</Parameters>")
+
+        # Fix boolean attributes without values (with stray quote)
+        # Pattern: space + attribute_name + " + /> (where there's no = before the ")
+        # e.g., accidentNatural"/> becomes accidentNatural="true"/>
+        # The stray " is consumed and replaced with ="true"
+        xml_str = re.sub(
+            r' ([a-zA-Z_][a-zA-Z0-9_]*)"(/>)',
+            r' \1="true"\2',
+            xml_str
+        )
+        xml_str = re.sub(
+            r' ([a-zA-Z_][a-zA-Z0-9_]*)"( )',
+            r' \1="true"\2',
+            xml_str
+        )
 
         # Re-encode to bytes
         return xml_str.encode("utf-8")
