@@ -1,35 +1,49 @@
-# Guitar Pro 8 Audio Injection Tool
+# Guitar Pro Audio Injection Tool
 
-Automate the workflow of downloading YouTube audio, injecting it into Guitar Pro 8 (.gp) files, and creating sync points for playback alignment.
+Automate the workflow of downloading YouTube audio, injecting it into Guitar Pro files, and creating sync points for playback alignment.
+
+## Supported Formats
+
+| Format | Extension | Support |
+|--------|-----------|---------|
+| Guitar Pro 8 | `.gp` | Full support (native) |
+| Guitar Pro 6/7 | `.gpx` | Full support (converts to GP8) |
+| Guitar Pro 5 | `.gp5` | Not yet supported* |
+| Guitar Pro 4 | `.gp4` | Not yet supported* |
+| Guitar Pro 3 | `.gp3` | Not yet supported* |
+
+*GP3/GP4/GP5 files can be opened in Guitar Pro 8 and saved as `.gp` format for use with this tool.
 
 ## Features
 
+- **Multi-format support**: Works with GP8 (.gp) and GPX (.gpx) files
 - Download audio from YouTube using yt-dlp
 - Convert audio to MP3 192kbps for Guitar Pro compatibility
-- Automatic BPM and beat detection using aubio
-- Generate sync points for accurate playback alignment
+- Automatic BPM and beat detection using librosa
+- Adaptive tempo sync for accurate playback alignment
 - Interactive CLI interface with beautiful terminal UI
-- Extract, modify, and repackage Guitar Pro 8 files safely
+- Extract, modify, and repackage Guitar Pro files safely
 
 ## Installation
 
 ### System Requirements
 
-You need to install system dependencies first:
+You need to install ffmpeg first:
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt-get install ffmpeg libaubio-dev aubio-tools
+sudo apt-get install ffmpeg
 ```
 
 **macOS:**
 ```bash
-brew install ffmpeg aubio
+brew install ffmpeg
 ```
 
 **Windows:**
 - Download ffmpeg from [ffmpeg.org](https://ffmpeg.org/)
-- For aubio: `pip install aubio` should work, or use conda
+
+**Python Version:** Python 3.11 or 3.12 recommended. Python 3.13+ may have compatibility issues with some audio libraries.
 
 ### Python Package
 
@@ -66,10 +80,10 @@ guitarprotool
 ```
 
 Follow the interactive prompts to:
-1. Select a Guitar Pro 8 (.gp) file
+1. Select a Guitar Pro file (.gp or .gpx)
 2. Provide a YouTube URL or local audio file
 3. Review detected BPM (option to override)
-4. Process and generate output file
+4. Process and generate output file (always saved as .gp)
 
 ### Output
 
@@ -91,7 +105,7 @@ The tool creates a new file: `[original]_with_audio.gp` containing:
 
 - **yt-dlp**: YouTube audio download
 - **pydub**: Audio processing and conversion
-- **aubio**: BPM and beat detection (lightweight, fast)
+- **librosa**: BPM and beat detection
 - **lxml**: XML parsing and modification
 - **rich**: Beautiful terminal UI
 - **questionary**: Interactive prompts
@@ -122,7 +136,9 @@ mypy src/
 
 Currently in active development (v0.1.0).
 
-Tested with Guitar Pro 8 files. Compatibility with earlier GP versions not guaranteed.
+- Full support for Guitar Pro 8 (.gp) files
+- Full support for Guitar Pro 6/7 (.gpx) files (converted to GP8 on output)
+- GP3/GP4/GP5 support planned for future release
 
 ## Contributing
 
@@ -134,6 +150,6 @@ MIT License
 
 ## Acknowledgments
 
-- Built for automating bass tab practice with Guitar Pro 8
-- Uses aubio for lightweight, accurate beat detection
+- Built for automating bass tab practice with Guitar Pro
+- Uses librosa for accurate beat detection with adaptive tempo sync
 - Inspired by the need to quickly add backing tracks to existing tabs
