@@ -211,6 +211,9 @@ class GPFileHandler:
         """
         import re
 
+        # Strip trailing null bytes (padding from BCFS container)
+        content = content.rstrip(b'\x00')
+
         # Decode to string for manipulation
         try:
             xml_str = content.decode("utf-8")
@@ -222,6 +225,8 @@ class GPFileHandler:
         xml_str = xml_str.replace("</Params>", "</Parameters>")
         xml_str = xml_str.replace("<Finge>", "<Fingering>")
         xml_str = xml_str.replace("<Poon ", "<Position ")
+        xml_str = xml_str.replace("<Rhyref=", "<Rhythm ref=")
+        xml_str = xml_str.replace("<Propename=", "<Property name=")
         xml_str = xml_str.replace("</AccialCount>", "</AccidentalCount>")
         xml_str = xml_str.replace("</Prty>", "</Property>")
         xml_str = xml_str.replace("</CleVoices>", "</Clef><Voices>")
@@ -239,6 +244,33 @@ class GPFileHandler:
         xml_str = re.sub(
             r'<Property na([A-Z][a-zA-Z0-9_]*)">',
             r'<Property name="\1">',
+            xml_str
+        )
+
+        # Fix corrupted CDATA sections
+        # e.g., <![A[7]]> should be <![CDATA[A[7]]]>
+        # The "CDATA[" part is truncated, leaving invalid XML
+        xml_str = re.sub(
+            r'<!\[(?!CDATA\[)(.*?)\]>',
+            r'<![CDATA[\1]]>',
+            xml_str
+        )
+
+        # Fix corrupted closing tags where content and </ got replaced by tag name
+        # e.g., <Dynamic>Dynamic> should be <Dynamic></Dynamic>
+        # The pattern <Tag>Tag> indicates corruption - convert to empty element
+        xml_str = re.sub(
+            r'<(\w+)>\1>',
+            r'<\1></\1>',
+            xml_str
+        )
+
+        # Fix corrupted tags where tag name is doubled
+        # e.g., <StringString> should be <String></String>
+        # The content and closing tag got merged into opening tag name
+        xml_str = re.sub(
+            r'<(\w+)\1>',
+            r'<\1></\1>',
             xml_str
         )
 
