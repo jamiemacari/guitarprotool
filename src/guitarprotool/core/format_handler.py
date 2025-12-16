@@ -297,12 +297,26 @@ class GPFileHandler:
 
         GPX files contain:
         - score.gpif (the main XML)
-        - Content.xml (metadata, optional)
+        - BinaryStylesheet, LayoutConfiguration, PartConfiguration (metadata)
         - misc.xml (optional)
 
-        We create a GP8-compatible structure.
+        We create a GP8-compatible structure matching real GP8 files:
+        - Content/score.gpif
+        - Content/BinaryStylesheet
+        - Content/LayoutConfiguration
+        - Content/PartConfiguration
+        - Content/Audio/ (for audio injection)
+        - VERSION
         """
         self._extract_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create Content directory structure
+        content_dir = self._extract_dir / "Content"
+        content_dir.mkdir(exist_ok=True)
+
+        # Create Audio directory (for audio injection)
+        audio_dir = content_dir / "Audio"
+        audio_dir.mkdir(exist_ok=True)
 
         # Find and write score.gpif
         gpif_content = None
@@ -317,28 +331,31 @@ class GPFileHandler:
         # Fix known XML issues in GPX files
         gpif_content = self._fix_gpx_xml(gpif_content)
 
-        # Write score.gpif to root (GP8 structure)
-        gpif_path = self._extract_dir / "score.gpif"
+        # Write score.gpif to Content/ (GP8 structure)
+        gpif_path = content_dir / "score.gpif"
         gpif_path.write_bytes(gpif_content)
 
-        # Create Content directory
-        content_dir = self._extract_dir / "Content"
-        content_dir.mkdir(exist_ok=True)
+        # Copy other metadata files from GPX container to Content/
+        metadata_files = ["BinaryStylesheet", "LayoutConfiguration", "PartConfiguration"]
+        for name, content in files.items():
+            if name in metadata_files:
+                file_path = content_dir / name
+                file_path.write_bytes(content)
+                logger.debug(f"Wrote metadata file: {name}")
 
-        # Create Audio directory (for audio injection)
-        audio_dir = content_dir / "Audio"
-        audio_dir.mkdir(exist_ok=True)
+        # Create VERSION file (required by GP8)
+        version_path = self._extract_dir / "VERSION"
+        version_path.write_text("7.0")  # GP8 uses version 7.0
 
         # Create a minimal GPFile wrapper pointing to a temporary .gp file
         self._converted_path = self.temp_dir / "converted.gp"
 
-        # We need to create a valid .gp file that GPFile can work with
-        # For now, we'll create a dummy one and set up the GPFile manually
+        # Create dummy .gp file for GPFile to work with
         import zipfile
 
         with zipfile.ZipFile(self._converted_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("score.gpif", gpif_content)
-            zf.writestr("Content/", "")
+            zf.writestr("Content/score.gpif", gpif_content)
+            zf.writestr("VERSION", "7.0")
 
         self._gp8_file = GPFile(self._converted_path)
         self._gp8_file.temp_dir = self._extract_dir
