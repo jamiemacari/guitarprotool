@@ -227,8 +227,9 @@ class GPFileHandler:
         xml_str = xml_str.replace("</CleVoices>", "</Clef><Voices>")
         xml_str = xml_str.replace("</Keyime>", "</Key><Time>")
         xml_str = xml_str.replace("</IteItem", "</Item><Item")
-        # Fix truncated <Bars> opening tag (appears as "s>" at line start)
+        # Fix truncated opening tags (appear as partial tags)
         xml_str = re.sub(r"\ns>(\d+)</Bars>", r"\n<Bars>\1</Bars>", xml_str)
+        xml_str = re.sub(r"<es>([^<]+)</Voices>", r"<Voices>\1</Voices>", xml_str)
 
         # Fix boolean attributes without values (with stray quote)
         # Pattern: space + attribute_name + " + /> (where there's no = before the ")
