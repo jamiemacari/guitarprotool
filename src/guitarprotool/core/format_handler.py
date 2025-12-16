@@ -233,6 +233,15 @@ class GPFileHandler:
         # Fix truncated </Voice> closing tag (appears as <ce>)
         xml_str = xml_str.replace("<ce>\n<Voice", "</Voice>\n<Voice")
 
+        # Fix corrupted Property name attributes
+        # e.g., <Property naWhammyBarMiddleValue"> → <Property name="WhammyBarMiddleValue">
+        # The "me=" part of name=" is truncated, leaving "na" merged with the value
+        xml_str = re.sub(
+            r'<Property na([A-Z][a-zA-Z0-9_]*)">',
+            r'<Property name="\1">',
+            xml_str
+        )
+
         # Fix boolean attributes without values (with stray quote)
         # Pattern: space + attribute_name + " + /> (where there's no = before the ")
         # e.g., accidentNatural"/> becomes accidentNatural="true"/>
