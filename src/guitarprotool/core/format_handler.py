@@ -230,6 +230,8 @@ class GPFileHandler:
         # Fix truncated opening tags (appear as partial tags)
         xml_str = re.sub(r"\ns>(\d+)</Bars>", r"\n<Bars>\1</Bars>", xml_str)
         xml_str = re.sub(r"<es>([^<]+)</Voices>", r"<Voices>\1</Voices>", xml_str)
+        # Fix truncated </Voice> closing tag (appears as <ce>)
+        xml_str = xml_str.replace("<ce>\n<Voice", "</Voice>\n<Voice")
 
         # Fix boolean attributes without values (with stray quote)
         # Pattern: space + attribute_name + " + /> (where there's no = before the ")
