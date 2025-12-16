@@ -294,4 +294,6 @@ class GPFile:
 
     def __del__(self):
         """Destructor: ensure cleanup on object deletion."""
-        self.cleanup()
+        # Guard against partial initialization
+        if hasattr(self, "temp_dir"):
+            self.cleanup()

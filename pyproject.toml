@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "guitarprotool"
 version = "0.1.0"
-description = "Audio injection tool for Guitar Pro 8 files with automatic sync point detection"
+description = "Audio injection tool for Guitar Pro files (.gp, .gpx, .gp5) with automatic sync point detection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -33,6 +33,7 @@ dependencies = [
     "questionary>=2.0.0",
     "loguru>=0.7.0",
     "pydantic>=2.0.0",
+    "pyguitarpro>=0.10.0",  # For reading GP3/GP4/GP5 binary formats
 ]
 
 [project.optional-dependencies]

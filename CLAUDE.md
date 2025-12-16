@@ -8,7 +8,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Guitar Pro 8 Audio Injection Tool - Automates downloading YouTube audio, injecting it into Guitar Pro 8 (.gp) files, and creating sync points for playback alignment. Built for automating bass tab practice workflows.
+Guitar Pro Audio Injection Tool - Automates downloading YouTube audio, injecting it into Guitar Pro files (.gp and .gpx), and creating sync points for playback alignment. Built for automating bass tab practice workflows.
+
+**Supported Formats:**
+- `.gp` (Guitar Pro 8) - Native support
+- `.gpx` (Guitar Pro 6/7) - Converted to GP8 internally
+- `.gp5/.gp4/.gp3` - Not yet supported (shows helpful error with workaround)
 
 ## System Dependencies Required
 
@@ -115,8 +120,23 @@ The `score.gpif` XML file contains all tab data. To add audio:
 
 ### Module Responsibilities
 
+**`core/format_handler.py`** - GPFileHandler class (NEW)
+- Unified handler for all Guitar Pro file formats (.gp, .gpx, .gp5, .gp4, .gp3)
+- Detects format from file extension and routes to appropriate handler
+- For GPX files: decompresses BCFZ, fixes XML corruption, creates GP8 structure
+- **Key methods**: `prepare_for_audio_injection()`, `get_gpif_path()`, `get_audio_dir()`, `save()`
+- Uses context manager pattern for automatic cleanup
+- Location: `src/guitarprotool/core/format_handler.py`
+
+**`core/bcfz.py`** - BCFZ Decompression (NEW)
+- Handles BCFZ compression used by GPX files (Guitar Pro 6/7)
+- Implements LZ77-style decompression with bit streams
+- Extracts files from BCFS container format
+- **Key functions**: `decompress_bcfz()`, `extract_gpx_files()`
+- Location: `src/guitarprotool/core/bcfz.py`
+
 **`core/gp_file.py`** - GPFile class
-- Handles all .gp file I/O operations
+- Handles .gp file I/O operations (used internally by GPFileHandler)
 - Preserves ZIP compression settings exactly (stores metadata during extraction)
 - Context manager support for automatic cleanup
 - **Key methods**: `extract()`, `get_gpif_path()`, `get_audio_dir()`, `repackage()`
@@ -382,3 +402,65 @@ Frame offsets and FramePadding work together to align audio with the tab:
 3. **Consider percussive separation** - For complex audio, separating drums might improve beat detection
 
 See `docs/ADAPTIVE_TEMPO_SYNC_PLAN.md` for original implementation plan.
+
+## GPX Format Support - IMPLEMENTED
+
+**Status:** ✅ Implemented
+**Branch:** `support-other-formats`
+
+### GPX File Structure
+GPX files (Guitar Pro 6/7) use BCFZ compression containing a BCFS file system:
+- `score.gpif` - Main XML file (same schema as GP8)
+- `BinaryStylesheet` - Visual styling data
+- `LayoutConfiguration` - Page layout settings
+- `PartConfiguration` - Part/track configuration
+- `misc.xml` - Optional metadata
+
+### GPX to GP8 Conversion Process
+1. Read GPX file and decompress BCFZ data (`bcfz.py`)
+2. Extract files from BCFS container
+3. Fix XML corruption artifacts (`format_handler._fix_gpx_xml()`)
+4. Create GP8-compatible directory structure
+5. Copy metadata files (BinaryStylesheet, etc.)
+6. Create VERSION file
+
+### XML Corruption Fixes
+GPX files often have corrupted XML due to compression artifacts. The `_fix_gpx_xml()` method in `format_handler.py` fixes these issues:
+
+**Tag truncation/corruption:**
+- `</Params>` → `</Parameters>`
+- `<Finge>` → `<Fingering>`
+- `<Poon ` → `<Position `
+- `<Rhyref=` → `<Rhythm ref=`
+- `<Propename=` → `<Property name=`
+- `</AccialCount>` → `</AccidentalCount>`
+- `</Prty>` → `</Property>`
+- `</CleVoices>` → `</Clef><Voices>`
+- `</Keyime>` → `</Key><Time>`
+- `</IteItem` → `</Item><Item`
+
+**CDATA corruption:**
+- `<![A[7]]>` → `<![CDATA[A[7]]]>` (CDATA[ part truncated)
+
+**Tag name doubling:**
+- `<StringString>` → `<String></String>` (content merged into tag)
+- `<Dynamic>Dynamic>` → `<Dynamic></Dynamic>`
+
+**Attribute corruption:**
+- `<Property naWhammyBar...">` → `<Property name="WhammyBar...">`
+- Boolean attributes without values: `attr"/>` → `attr="true"/>`
+
+**Container padding:**
+- Trailing null bytes stripped from BCFS container
+
+### Adding New XML Fixes
+When encountering new XML parse errors from GPX files:
+1. Check the error message for line number and column
+2. Inspect the raw decompressed XML at that location
+3. Identify the corruption pattern
+4. Add a fix to `_fix_gpx_xml()` in `format_handler.py`
+5. Test with the problematic GPX file
+
+### Test Files
+- `tests/test_bcfz.py` - 20 tests for BCFZ decompression
+- `tests/test_format_handler.py` - 27 tests for format handling
