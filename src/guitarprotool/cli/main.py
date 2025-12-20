@@ -55,8 +55,8 @@ except ImportError as e:
     AUDIO_PROCESSOR_AVAILABLE = False
     logger.warning(f"AudioProcessor not available: {e}")
 
-# Rich console for styled output
-console = Console()
+# Rich console for styled output (record=True enables session capture)
+console = Console(record=True)
 
 # Custom questionary style
 custom_style = Style(
@@ -236,27 +236,50 @@ def get_troubleshooting_dir() -> Path:
 
 
 def save_troubleshooting_copies(
+    input_gp_path: Path,
     output_gp_path: Path,
     audio_path: Path,
     troubleshoot_dir: Path,
-) -> tuple[Path, Path]:
-    """Save copies of the GP file and MP3 for troubleshooting.
+) -> tuple[Path, Path, Path]:
+    """Save copies of the input GP, output GP, and MP3 for troubleshooting.
 
     Args:
+        input_gp_path: Path to the original input GP file
         output_gp_path: Path to the final GP file
         audio_path: Path to the processed MP3 file
         troubleshoot_dir: Directory to save copies to
 
     Returns:
-        Tuple of (gp_copy_path, mp3_copy_path)
+        Tuple of (input_copy_path, output_copy_path, mp3_copy_path)
     """
-    gp_copy_path = troubleshoot_dir / output_gp_path.name
+    # Use descriptive names for clarity in run folder
+    input_copy_path = troubleshoot_dir / f"input_{input_gp_path.name}"
+    output_copy_path = troubleshoot_dir / output_gp_path.name
     mp3_copy_path = troubleshoot_dir / audio_path.name
 
-    shutil.copy2(output_gp_path, gp_copy_path)
+    shutil.copy2(input_gp_path, input_copy_path)
+    shutil.copy2(output_gp_path, output_copy_path)
     shutil.copy2(audio_path, mp3_copy_path)
 
-    return gp_copy_path, mp3_copy_path
+    return input_copy_path, output_copy_path, mp3_copy_path
+
+
+def save_session_log(troubleshoot_dir: Path) -> tuple[Path, Path]:
+    """Save TUI session output to text and HTML files.
+
+    Args:
+        troubleshoot_dir: Directory to save session logs to
+
+    Returns:
+        Tuple of (txt_path, html_path)
+    """
+    txt_path = troubleshoot_dir / "session_log.txt"
+    html_path = troubleshoot_dir / "session_log.html"
+
+    console.save_text(str(txt_path))
+    console.save_html(str(html_path))
+
+    return txt_path, html_path
 
 
 def process_audio(
@@ -401,30 +424,6 @@ def display_drift_report(drift_report: DriftReport):
             console.print(f"[dim]... and {remaining} more bars with drift[/dim]")
 
 
-def get_manual_bpm() -> Optional[float]:
-    """Prompt user for manual BPM input.
-
-    Returns:
-        BPM value or None to use detected
-    """
-    use_manual = questionary.confirm(
-        "Would you like to enter BPM manually?",
-        default=False,
-        style=custom_style,
-    ).ask()
-
-    if not use_manual:
-        return None
-
-    bpm_str = questionary.text(
-        "Enter BPM:",
-        validate=lambda x: x.replace(".", "").isdigit(),
-        style=custom_style,
-    ).ask()
-
-    return float(bpm_str) if bpm_str else None
-
-
 def run_pipeline():
     """Execute the full audio injection pipeline."""
     console.print()
@@ -546,17 +545,6 @@ def run_pipeline():
                     f"[yellow]Note:[/yellow] Tempo corrected from {original_detected_bpm:.1f} "
                     f"to {beat_info.bpm:.1f} BPM (reference tempo: {original_tempo:.1f})"
                 )
-                console.print()
-
-            # Option to manually override BPM
-            manual_bpm = get_manual_bpm()
-            if manual_bpm:
-                beat_info = BeatInfo(
-                    bpm=manual_bpm,
-                    beat_times=beat_info.beat_times,
-                    confidence=1.0,
-                )
-                console.print(f"[cyan]Using manual BPM:[/cyan] {manual_bpm}")
 
             console.print()
 
@@ -627,8 +615,12 @@ def run_pipeline():
                     description=f"[green]Generated {len(sync_points)} adaptive sync points",
                 )
 
+            # Create troubleshooting directory early so all artifacts go there
+            troubleshoot_dir = get_troubleshooting_dir()
+
             # Display drift report outside progress context and write to file
             drift_report_path = None
+            debug_beats_path = None
             if has_drift_report and drift_report:
                 # Add sync point bar numbers to the report
                 drift_report.bars_with_sync_points = [sp.bar for sp in sync_result.sync_points]
@@ -636,15 +628,15 @@ def run_pipeline():
                 console.print()
                 display_drift_report(drift_report)
 
-                # Write drift report to file (next to output file)
-                drift_report_path = output_path.parent / f"{output_path.stem}_drift_report.txt"
+                # Write drift report to run folder
+                drift_report_path = troubleshoot_dir / "drift_report.txt"
                 drift_report.write_to_file(str(drift_report_path))
-                console.print(f"[dim]Drift report saved to: {drift_report_path.name}[/dim]")
+                console.print(f"[dim]Drift report saved to: {drift_report_path}[/dim]")
 
-                # Write debug beat data (useful for diagnosing beat detection issues)
-                debug_beats_path = output_path.parent / f"{output_path.stem}_debug_beats.txt"
+                # Write debug beat data to run folder
+                debug_beats_path = troubleshoot_dir / "debug_beats.txt"
                 analyzer.write_debug_beats(str(debug_beats_path))
-                console.print(f"[dim]Debug beat data saved to: {debug_beats_path.name}[/dim]")
+                console.print(f"[dim]Debug beat data saved to: {debug_beats_path}[/dim]")
                 console.print()
 
             # Continue with XML injection
@@ -697,13 +689,16 @@ def run_pipeline():
                     repack_task, completed=100, total=100, description="[green]File saved"
                 )
 
-        # Save troubleshooting copies
-        troubleshoot_dir = get_troubleshooting_dir()
-        gp_copy, mp3_copy = save_troubleshooting_copies(
+        # Save troubleshooting copies (input, output, and audio)
+        input_copy, output_copy, mp3_copy = save_troubleshooting_copies(
+            gp_path,
             output_path,
             audio_info.file_path,
             troubleshoot_dir,
         )
+
+        # Save session log (both .txt and .html formats)
+        txt_log, html_log = save_session_log(troubleshoot_dir)
 
         # Success!
         console.print()
@@ -715,7 +710,7 @@ def run_pipeline():
                 f"Sync points: {len(sync_points)}\n"
                 f"Original tempo: {original_tempo:.1f}\n"
                 f"Audio offset: {sync_result.first_beat_time:.3f}s[/dim]\n\n"
-                f"[dim]Troubleshooting copies saved to:\n{troubleshoot_dir}[/dim]",
+                f"[dim]All testing artifacts saved to:\n{troubleshoot_dir}[/dim]",
                 title="Complete",
                 border_style="green",
             )

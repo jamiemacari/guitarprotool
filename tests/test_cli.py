@@ -217,24 +217,31 @@ class TestTroubleshootingCopies:
         assert result.name.startswith("run_")
 
     def test_save_troubleshooting_copies(self, temp_dir):
-        """Test that save_troubleshooting_copies copies both files."""
+        """Test that save_troubleshooting_copies copies all files."""
         # Create source files
-        gp_file = temp_dir / "test.gp"
+        input_gp_file = temp_dir / "input.gp"
+        output_gp_file = temp_dir / "output_with_audio.gp"
         mp3_file = temp_dir / "test.mp3"
-        gp_file.write_text("gp content")
+        input_gp_file.write_text("input gp content")
+        output_gp_file.write_text("output gp content")
         mp3_file.write_text("mp3 content")
 
         # Create troubleshoot dir
         troubleshoot_dir = temp_dir / "troubleshoot"
         troubleshoot_dir.mkdir()
 
-        gp_copy, mp3_copy = save_troubleshooting_copies(gp_file, mp3_file, troubleshoot_dir)
+        input_copy, output_copy, mp3_copy = save_troubleshooting_copies(
+            input_gp_file, output_gp_file, mp3_file, troubleshoot_dir
+        )
 
-        assert gp_copy.exists()
+        assert input_copy.exists()
+        assert output_copy.exists()
         assert mp3_copy.exists()
-        assert gp_copy.read_text() == "gp content"
+        assert input_copy.read_text() == "input gp content"
+        assert output_copy.read_text() == "output gp content"
         assert mp3_copy.read_text() == "mp3 content"
-        assert gp_copy.name == "test.gp"
+        assert input_copy.name == "input_input.gp"
+        assert output_copy.name == "output_with_audio.gp"
         assert mp3_copy.name == "test.mp3"
 
 
