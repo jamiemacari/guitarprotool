@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **NEVER merge PRs to main without explicit user confirmation.** Even if the user's prompt says to "complete the PR" or "merge it", always ask for confirmation before merging. Create the PR, then wait for the user to confirm it should be merged.
 
+**ALWAYS use feature branches.** Never commit changes directly to main without explicit double-confirmation from the user. Standard workflow:
+1. Create a feature/bugfix branch before making changes
+2. Make changes and commit to the feature branch
+3. Push and create a PR for review
+4. Only merge after user confirms
+
 ## Project Overview
 
 Guitar Pro Audio Injection Tool - Automates downloading YouTube audio, injecting it into Guitar Pro files (.gp and .gpx), and creating sync points for playback alignment. Built for automating bass tab practice workflows.
@@ -298,10 +304,11 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 - ✅ Pipeline phases wrapped in try/except with user-friendly errors via rich.console
 - ✅ Main menu: "Inject audio into GP file", "Detect BPM from audio file", "Exit"
 - ✅ Step-by-step workflow with progress feedback
-- ✅ Manual BPM override option after detection
+- ✅ Fully automated (no manual BPM prompts)
+- ✅ TUI session capture with `Console(record=True)`
 - ✅ Handles Python 3.14 pydub/audioop compatibility gracefully
 - Location: `src/guitarprotool/cli/main.py`
-- Tests: `tests/test_cli.py` (14 test cases)
+- Tests: `tests/test_cli.py`
 
 ## Entry Point
 The `__main__.py` calls `cli.main.main()` which displays the interactive menu. Entry point registered in `pyproject.toml` as `guitarprotool = "guitarprotool.__main__:main"`.
@@ -332,8 +339,8 @@ Run with: `python -m guitarprotool` or `guitarprotool` (if installed)
 - ✅ `DriftAnalyzer` class in `src/guitarprotool/core/drift_analyzer.py`
 - ✅ `adaptive` parameter in `BeatDetector.generate_sync_points()` (default True)
 - ✅ Tempo correction for double/half-time detection (`BeatDetector.correct_tempo_multiple()`)
-- ✅ Drift report file output (`{output}_drift_report.txt`)
-- ✅ Debug beat data output (`{output}_debug_beats.txt`) for diagnosing beat detection issues
+- ✅ Drift report file output (saved to run folder as `drift_report.txt`)
+- ✅ Debug beat data output (saved to run folder as `debug_beats.txt`) for diagnosing beat detection issues
 - ✅ Drift report shows which bars have sync points (`<<SYNC` marker)
 - ✅ CLI displays tempo correction when applied
 - ✅ **Frame offsets now use actual detected beat times** (fixed drift issue)
@@ -402,6 +409,40 @@ Frame offsets and FramePadding work together to align audio with the tab:
 3. **Consider percussive separation** - For complex audio, separating drums might improve beat detection
 
 See `docs/ADAPTIVE_TEMPO_SYNC_PLAN.md` for original implementation plan.
+
+## Testing Artifacts - Run Folder
+
+**Status:** ✅ Implemented (PR #11)
+
+Each pipeline run saves all artifacts to a timestamped directory for manual testing and debugging:
+
+```
+files/run_YYYYMMDD_HHMMSS/
+├── input_<filename>.gp    # Copy of original input file
+├── <output>.gp            # Modified output file with audio
+├── <uuid>.mp3             # Processed audio file
+├── drift_report.txt       # Tempo drift analysis
+├── debug_beats.txt        # Beat detection debug data
+├── session_log.txt        # TUI output (plain text)
+└── session_log.html       # TUI output (formatted HTML)
+```
+
+### Key Functions
+- `get_troubleshooting_dir()` - Creates timestamped run folder
+- `save_troubleshooting_copies()` - Copies input, output, and audio files
+- `save_session_log()` - Exports TUI session as .txt and .html
+
+### TUI Session Capture
+The Rich console is initialized with `record=True` to capture all terminal output:
+```python
+console = Console(record=True)
+```
+
+At the end of the pipeline, session logs are saved via:
+```python
+console.save_text(str(txt_path))
+console.save_html(str(html_path))
+```
 
 ## GPX Format Support - IMPLEMENTED
 
