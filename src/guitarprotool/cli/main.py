@@ -530,6 +530,14 @@ def run_pipeline():
                     f"No tempo found in GP file, using detected BPM: {original_tempo:.1f}"
                 )
 
+            # Find first bar with actual notes (for tabs with intro rests)
+            first_bar_with_notes = modifier.get_first_bar_with_notes()
+            if first_bar_with_notes > 0:
+                console.print(
+                    f"[cyan]Note:[/cyan] Tab has {first_bar_with_notes} intro bar(s) "
+                    f"before notes start. Audio will align with bar {first_bar_with_notes}."
+                )
+
             # Correct for double/half-time detection
             original_detected_bpm = beat_info.bpm
             beat_info = BeatDetector.correct_tempo_multiple(beat_info, original_tempo)
@@ -568,6 +576,7 @@ def run_pipeline():
                         beat_times=beat_info.beat_times,
                         original_tempo=original_tempo,
                         beats_per_bar=4,
+                        start_bar=first_bar_with_notes,
                     )
                     drift_report = analyzer.analyze(max_bars=max_bars)
                     # Add tempo correction info to report
@@ -596,6 +605,7 @@ def run_pipeline():
                     sync_interval=16,
                     max_bars=max_bars,
                     adaptive=True,  # Use adaptive tempo sync
+                    start_bar=first_bar_with_notes,
                 )
 
                 # Convert to XML modifier format

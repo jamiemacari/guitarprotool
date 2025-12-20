@@ -302,6 +302,7 @@ class BeatDetector:
         start_offset: float = 0.0,
         max_bars: Optional[int] = None,
         adaptive: bool = True,
+        start_bar: int = 0,
     ) -> SyncResult:
         """Generate sync points for audio alignment with the tab.
 
@@ -310,9 +311,9 @@ class BeatDetector:
         at each sync point and place sync points more frequently where tempo
         drifts significantly.
 
-        The first detected beat/onset in the audio is used as the starting point.
-        The frame_padding value returned should be set on BackingTrackConfig to
-        align the audio with bar 0 of the tab.
+        The first detected beat/onset in the audio is used as the starting point
+        for alignment with start_bar. If start_bar > 0, the audio is assumed to
+        start at that bar in the tab (e.g., tabs with intro rests).
 
         Args:
             beat_info: Beat detection results from analyze()
@@ -325,6 +326,9 @@ class BeatDetector:
             adaptive: If True (default), use adaptive sync point placement with
                      local tempo detection. If False, use static intervals with
                      original_tempo for all sync points.
+            start_bar: Bar number where audio content starts in the tab.
+                       The first detected beat will align with this bar.
+                       Default 0 assumes music starts at bar 0.
 
         Returns:
             SyncResult containing sync points and frame_padding for alignment
@@ -338,10 +342,10 @@ class BeatDetector:
         if len(beat_info.beat_times) < 2:
             raise BeatDetectionError("Need at least 2 beats to generate sync points")
 
-        # Use the first detected beat/onset as the starting point for bar 0
+        # Use the first detected beat/onset as the starting point for start_bar
         first_beat_time = beat_info.beat_times[0] + start_offset
 
-        # FramePadding shifts the audio so bar 0 aligns with the first detected beat.
+        # FramePadding shifts the audio so start_bar aligns with the first detected beat.
         # A negative value means the audio starts earlier (shifts left in the waveform view).
         # This accounts for any intro/silence before the first beat in the audio file.
         frame_padding = -int(first_beat_time * self.sample_rate)
@@ -354,21 +358,22 @@ class BeatDetector:
             audio_duration = beat_info.beat_times[-1] - beat_info.beat_times[0]
             seconds_per_beat = 60.0 / original_tempo
             seconds_per_bar = seconds_per_beat * beats_per_bar
-            max_bars = int(audio_duration / seconds_per_bar) + 1
+            max_bars = int(audio_duration / seconds_per_bar) + start_bar + 1
 
         if adaptive:
             sync_points = self._generate_adaptive_sync_points(
-                beat_info, original_tempo, beats_per_bar, bar_interval, max_bars
+                beat_info, original_tempo, beats_per_bar, bar_interval, max_bars, start_bar
             )
         else:
             sync_points = self._generate_static_sync_points(
-                original_tempo, beats_per_bar, bar_interval, max_bars
+                original_tempo, beats_per_bar, bar_interval, max_bars, start_bar
             )
 
         logger.success(
             f"Generated {len(sync_points)} sync points "
             f"({'adaptive' if adaptive else 'static'}), "
-            f"frame_padding={frame_padding} ({first_beat_time:.3f}s offset)"
+            f"frame_padding={frame_padding} ({first_beat_time:.3f}s offset), "
+            f"start_bar={start_bar}"
         )
 
         return SyncResult(
@@ -384,6 +389,7 @@ class BeatDetector:
         beats_per_bar: int,
         bar_interval: int,
         max_bars: int,
+        start_bar: int = 0,
     ) -> List[SyncPointData]:
         """Generate sync points with adaptive tempo detection.
 
@@ -399,6 +405,7 @@ class BeatDetector:
                 original_tempo=original_tempo,
                 beats_per_bar=beats_per_bar,
                 sample_rate=self.sample_rate,
+                start_bar=start_bar,
             )
             sync_points = analyzer.generate_adaptive_sync_points(
                 max_bars=max_bars,
@@ -411,7 +418,7 @@ class BeatDetector:
             # Fall back to static generation if not enough beats
             logger.warning("Not enough beats for adaptive sync, using static mode")
             return self._generate_static_sync_points(
-                original_tempo, beats_per_bar, bar_interval, max_bars
+                original_tempo, beats_per_bar, bar_interval, max_bars, start_bar
             )
 
     def _generate_static_sync_points(
@@ -420,6 +427,7 @@ class BeatDetector:
         beats_per_bar: int,
         bar_interval: int,
         max_bars: int,
+        start_bar: int = 0,
     ) -> List[SyncPointData]:
         """Generate sync points with static interval (legacy behavior).
 
@@ -431,8 +439,11 @@ class BeatDetector:
         seconds_per_beat = 60.0 / original_tempo
         seconds_per_bar = seconds_per_beat * beats_per_bar
 
-        for bar in range(0, max_bars, bar_interval):
-            relative_time = bar * seconds_per_bar
+        # Start from start_bar (where audio content begins)
+        for bar in range(start_bar, max_bars, bar_interval):
+            # Calculate time relative to start_bar (not bar 0)
+            relative_bar = bar - start_bar
+            relative_time = relative_bar * seconds_per_bar
             frame_offset = int(relative_time * self.sample_rate)
 
             sync_point = SyncPointData(

@@ -373,6 +373,121 @@ class XMLModifier:
             logger.warning(f"Error counting bars: {e}")
             return 0
 
+    def get_first_bar_with_notes(self) -> int:
+        """Find the first bar that contains actual notes (not rests).
+
+        Analyzes the XML structure to determine which bar has the first
+        non-rest beat. This is useful for aligning audio when tabs have
+        intro measures that are rests.
+
+        The XML structure chain is:
+        MasterBars[index] -> Bar[id] -> Voice[ids] -> Beat[ids] -> Notes
+
+        Returns:
+            Bar index (0-indexed) of the first bar containing notes.
+            Returns 0 if no notes found or on error.
+        """
+        self._ensure_loaded()
+
+        try:
+            # Build lookup dictionaries for efficient traversal
+            beats_with_notes = self._build_beats_lookup()
+            voices_to_beats = self._build_voices_lookup()
+            bars_to_voices = self._build_bars_lookup()
+
+            # Iterate through MasterBars in order
+            master_bars = self._root.find("MasterBars")
+            if master_bars is None:
+                return 0
+
+            for bar_index, master_bar in enumerate(master_bars.findall("MasterBar")):
+                bars_elem = master_bar.find("Bars")
+                if bars_elem is None or not bars_elem.text:
+                    continue
+
+                # Get bar IDs referenced by this MasterBar
+                # For multi-track files, this is space-separated
+                bar_ids = bars_elem.text.strip().split()
+
+                # Check if any bar has notes
+                for bar_id in bar_ids:
+                    voice_ids = bars_to_voices.get(bar_id, [])
+                    for voice_id in voice_ids:
+                        if voice_id == "-1":  # Empty voice slot
+                            continue
+                        beat_ids = voices_to_beats.get(voice_id, [])
+                        for beat_id in beat_ids:
+                            if beats_with_notes.get(beat_id, False):
+                                logger.debug(f"First bar with notes: {bar_index}")
+                                return bar_index
+
+            # No notes found, return 0
+            logger.warning("No notes found in tab, defaulting to bar 0")
+            return 0
+
+        except Exception as e:
+            logger.warning(f"Error finding first bar with notes: {e}")
+            return 0
+
+    def _build_beats_lookup(self) -> dict:
+        """Build a lookup of beat_id -> has_notes."""
+        result = {}
+        beats = self._root.find("Beats")
+        if beats is None:
+            return result
+
+        for beat in beats.findall("Beat"):
+            beat_id = beat.get("id")
+            if beat_id is None:
+                continue
+            notes_elem = beat.find("Notes")
+            # Has notes if Notes element exists and has content
+            has_notes = notes_elem is not None and notes_elem.text and notes_elem.text.strip()
+            result[beat_id] = has_notes
+
+        return result
+
+    def _build_voices_lookup(self) -> dict:
+        """Build a lookup of voice_id -> list of beat_ids."""
+        result = {}
+        voices = self._root.find("Voices")
+        if voices is None:
+            return result
+
+        for voice in voices.findall("Voice"):
+            voice_id = voice.get("id")
+            if voice_id is None:
+                continue
+            beats_elem = voice.find("Beats")
+            if beats_elem is not None and beats_elem.text:
+                beat_ids = beats_elem.text.strip().split()
+                result[voice_id] = beat_ids
+            else:
+                result[voice_id] = []
+
+        return result
+
+    def _build_bars_lookup(self) -> dict:
+        """Build a lookup of bar_id -> list of voice_ids."""
+        result = {}
+        bars = self._root.find("Bars")
+        if bars is None:
+            return result
+
+        for bar in bars.findall("Bar"):
+            bar_id = bar.get("id")
+            if bar_id is None:
+                continue
+            voices_elem = bar.find("Voices")
+            if voices_elem is not None and voices_elem.text:
+                # Voices is space-separated list, e.g., "0 -1 -1 -1"
+                voice_ids = voices_elem.text.strip().split()
+                result[bar_id] = voice_ids
+            else:
+                result[bar_id] = []
+
+        return result
+
     def _ensure_loaded(self) -> None:
         """Ensure XML is loaded before operations.
 
