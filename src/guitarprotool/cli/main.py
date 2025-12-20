@@ -576,7 +576,6 @@ def run_pipeline():
                         beat_times=beat_info.beat_times,
                         original_tempo=original_tempo,
                         beats_per_bar=4,
-                        start_bar=first_bar_with_notes,
                     )
                     drift_report = analyzer.analyze(max_bars=max_bars)
                     # Add tempo correction info to report
@@ -605,8 +604,20 @@ def run_pipeline():
                     sync_interval=16,
                     max_bars=max_bars,
                     adaptive=True,  # Use adaptive tempo sync
-                    start_bar=first_bar_with_notes,
                 )
+
+                # Adjust frame_padding to account for intro bars
+                # The first detected beat should align with first_bar_with_notes, not bar 0
+                # frame_padding already shifts audio left by first_beat_time
+                # We need to shift it right by the duration of intro bars
+                if first_bar_with_notes > 0:
+                    beats_per_bar = 4
+                    seconds_per_bar = 60.0 / original_tempo * beats_per_bar
+                    intro_duration = first_bar_with_notes * seconds_per_bar
+                    intro_frames = int(intro_duration * 44100)  # sample rate
+                    adjusted_frame_padding = sync_result.frame_padding + intro_frames
+                else:
+                    adjusted_frame_padding = sync_result.frame_padding
 
                 # Convert to XML modifier format
                 sync_points = [
@@ -669,12 +680,12 @@ def run_pipeline():
                 )
 
                 # Create backing track config with frame_padding for audio alignment
-                # frame_padding is negative to skip intro/silence before the first beat
+                # frame_padding is adjusted to align first beat with first_bar_with_notes
                 track_config = BackingTrackConfig(
                     name=track_name,
                     short_name=track_name[:8] if len(track_name) > 8 else track_name,
                     asset_id=0,
-                    frame_padding=sync_result.frame_padding,
+                    frame_padding=adjusted_frame_padding,
                 )
 
                 # Inject elements
