@@ -575,9 +575,10 @@ def run_pipeline():
             if not audio_info:
                 raise AudioProcessingError("Failed to process audio")
 
-            # Bass isolation for improved beat detection (enabled by default if available)
-            beat_detection_audio = audio_info.file_path
+            # Bass isolation for finding bass start time (used for intro alignment)
+            # Beat detection uses ORIGINAL audio for accurate sync point timing
             bass_isolated = False
+            bass_first_beat_time = None
 
             if BASS_ISOLATION_AVAILABLE:
                 isolated_bass_path = isolate_bass(
@@ -586,8 +587,12 @@ def run_pipeline():
                     progress,
                 )
                 if isolated_bass_path:
-                    beat_detection_audio = isolated_bass_path
                     bass_isolated = True
+                    # Detect beats on isolated bass to find where bass starts
+                    bass_beat_info = detect_beats(isolated_bass_path, progress)
+                    if bass_beat_info and bass_beat_info.beat_times:
+                        bass_first_beat_time = bass_beat_info.beat_times[0]
+                        logger.info(f"Bass start detected at: {bass_first_beat_time:.3f}s")
             else:
                 # Show one-time info about bass isolation availability
                 progress.console.print(
@@ -595,8 +600,9 @@ def run_pipeline():
                     "[dim]    pip install guitarprotool[bass-isolation][/dim]"
                 )
 
-            # Detect beats (using isolated bass if available, otherwise full mix)
-            beat_info = detect_beats(beat_detection_audio, progress)
+            # Detect beats on ORIGINAL audio for accurate sync point timing
+            # (Bass isolation is only used to find where bass starts, not for sync)
+            beat_info = detect_beats(audio_info.file_path, progress)
             if not beat_info:
                 raise BeatDetectionError("Failed to detect beats")
 
@@ -615,12 +621,37 @@ def run_pipeline():
 
             # Find where notes start in the tab (for bass isolation alignment)
             tab_start_bar = 0
-            if bass_isolated:
+            if bass_isolated and bass_first_beat_time is not None:
                 tab_start_bar = modifier.get_first_note_bar()
                 if tab_start_bar > 0:
+                    # Find the beat in original audio closest to bass start time
+                    # This aligns original audio beats with where bass actually starts
+                    min_diff = float('inf')
+                    bass_beat_index = 0
+                    for i, bt in enumerate(beat_info.beat_times):
+                        diff = abs(bt - bass_first_beat_time)
+                        if diff < min_diff:
+                            min_diff = diff
+                            bass_beat_index = i
+
+                    # Shift beat times so that bass_beat_index becomes beat 0
+                    # This makes the first beat align with where bass starts
+                    original_first_beat = beat_info.beat_times[0]
+                    aligned_beat_times = [
+                        bt - beat_info.beat_times[bass_beat_index] + bass_first_beat_time
+                        for bt in beat_info.beat_times[bass_beat_index:]
+                    ]
+                    beat_info = BeatInfo(
+                        bpm=beat_info.bpm,
+                        beat_times=aligned_beat_times,
+                        confidence=beat_info.confidence,
+                    )
+
                     logger.info(
                         f"Tab has {tab_start_bar} intro bars before notes start "
-                        f"(first note at bar {tab_start_bar + 1})"
+                        f"(first note at bar {tab_start_bar + 1}). "
+                        f"Aligned to bass start at {bass_first_beat_time:.3f}s "
+                        f"(shifted from beat {bass_beat_index})"
                     )
 
             # Correct for double/half-time detection
