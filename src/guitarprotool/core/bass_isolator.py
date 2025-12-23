@@ -9,8 +9,8 @@ audio is still embedded in the GP file.
 
 Dependencies:
     - torch>=2.0.0
-    - torchaudio>=2.0.0
     - demucs>=4.0.0
+    - scipy (for WAV file output, typically installed with librosa)
 
 Install with: pip install guitarprotool[bass-isolation]
 """
@@ -283,13 +283,24 @@ class BassIsolator:
             output_name = output_filename or f"{audio_path.stem}_bass"
             output_path = self.output_dir / f"{output_name}.wav"
 
-            # Ensure bass is on CPU and has correct shape for torchaudio
+            # Ensure bass is on CPU and convert to numpy
             bass_cpu = bass.cpu()
 
-            torchaudio.save(
+            # Use scipy to save WAV file (avoids torchaudio torchcodec dependency)
+            # scipy expects shape (samples, channels), torchaudio gives (channels, samples)
+            import scipy.io.wavfile as wavfile
+            import numpy as np
+
+            # Convert to numpy and transpose to (samples, channels)
+            bass_numpy = bass_cpu.numpy().T
+
+            # Convert to int16 for WAV file (scale from float [-1, 1] to int16 range)
+            bass_int16 = (bass_numpy * 32767).astype(np.int16)
+
+            wavfile.write(
                 str(output_path),
-                bass_cpu,
                 self._model.samplerate,
+                bass_int16,
             )
 
             processing_time = time.time() - start_time
