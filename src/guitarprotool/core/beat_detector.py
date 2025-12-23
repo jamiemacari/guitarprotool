@@ -214,18 +214,29 @@ class BeatDetector:
                     logger.debug(f"Using first onset ({first_onset:.3f}s) as start point")
 
             # Validate first beat - check if first interval is reasonable
-            # False onsets (noise, intro sounds) often have abnormally short intervals
-            if len(beat_times) >= 2:
+            # False onsets (noise, intro sounds) often have abnormally short OR long intervals
+            # Keep skipping until we find a valid first beat
+            expected_interval = 60.0 / bpm
+            while len(beat_times) >= 2:
                 first_interval = beat_times[1] - beat_times[0]
-                expected_interval = 60.0 / bpm
-                # If first interval is less than 60% of expected, skip the false onset
+                # Skip if first interval is too short (< 60%) or too long (> 200%)
                 if first_interval < expected_interval * 0.6:
                     skipped_beat = beat_times[0]
                     beat_times = beat_times[1:]
                     logger.warning(
                         f"Skipped false first onset at {skipped_beat:.3f}s "
-                        f"(interval {first_interval:.3f}s vs expected {expected_interval:.3f}s)"
+                        f"(interval {first_interval:.3f}s too short vs expected {expected_interval:.3f}s)"
                     )
+                elif first_interval > expected_interval * 2.0:
+                    skipped_beat = beat_times[0]
+                    beat_times = beat_times[1:]
+                    logger.warning(
+                        f"Skipped false first onset at {skipped_beat:.3f}s "
+                        f"(interval {first_interval:.3f}s too long vs expected {expected_interval:.3f}s)"
+                    )
+                else:
+                    # First interval is valid, stop checking
+                    break
 
             if progress_callback:
                 progress_callback(0.7, "Calculating confidence...")
@@ -310,10 +321,6 @@ class BeatDetector:
         at each sync point and place sync points more frequently where tempo
         drifts significantly.
 
-        The first detected beat/onset in the audio is used as the starting point.
-        The frame_padding value returned should be set on BackingTrackConfig to
-        align the audio with bar 0 of the tab.
-
         Args:
             beat_info: Beat detection results from analyze()
             original_tempo: Tab tempo in BPM
@@ -338,7 +345,7 @@ class BeatDetector:
         if len(beat_info.beat_times) < 2:
             raise BeatDetectionError("Need at least 2 beats to generate sync points")
 
-        # Use the first detected beat/onset as the starting point for bar 0
+        # Use the first detected beat/onset as the starting point
         first_beat_time = beat_info.beat_times[0] + start_offset
 
         # FramePadding shifts the audio so bar 0 aligns with the first detected beat.

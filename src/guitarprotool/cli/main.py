@@ -530,6 +530,11 @@ def run_pipeline():
                     f"No tempo found in GP file, using detected BPM: {original_tempo:.1f}"
                 )
 
+            # Note: We previously tried auto-detecting first bar with notes, but this
+            # doesn't work well for multi-instrument songs where the tab's instrument
+            # (e.g., bass) may not start at the same time as other instruments in the
+            # audio. The user should manually adjust alignment in Guitar Pro if needed.
+
             # Correct for double/half-time detection
             original_detected_bpm = beat_info.bpm
             beat_info = BeatDetector.correct_tempo_multiple(beat_info, original_tempo)
@@ -659,7 +664,7 @@ def run_pipeline():
                 )
 
                 # Create backing track config with frame_padding for audio alignment
-                # frame_padding is negative to skip intro/silence before the first beat
+                # frame_padding shifts audio so first detected beat aligns with bar 0
                 track_config = BackingTrackConfig(
                     name=track_name,
                     short_name=track_name[:8] if len(track_name) > 8 else track_name,

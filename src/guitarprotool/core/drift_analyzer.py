@@ -273,7 +273,7 @@ class DriftAnalyzer:
         self.expected_beat_interval = 60.0 / original_tempo
         self.expected_bar_duration = self.expected_beat_interval * beats_per_bar
 
-        # First beat time is our reference point (bar 0)
+        # First beat time is our reference point
         self.first_beat_time = beat_times[0]
 
         logger.debug(
@@ -374,14 +374,13 @@ class DriftAnalyzer:
         # Calculate expected time for this bar (relative to first beat)
         expected_time = bar * self.expected_bar_duration
 
-        # Find actual time from beat detection
+        # Find beat index for this bar
         beat_index = bar * self.beats_per_bar
         if beat_index >= len(self.beat_times):
             return None
 
         # Actual time relative to first beat
         actual_time = self.beat_times[beat_index] - self.first_beat_time
-
         # Calculate local tempo at this position
         local_tempo = self.calculate_local_tempo_at_bar(bar)
 
@@ -609,13 +608,7 @@ class DriftAnalyzer:
         """Calculate audio frame offset for a given bar.
 
         Frame offsets are RELATIVE to the first detected beat. Combined with
-        the negative FramePadding (set in beat_detector.py), this aligns the
-        audio so that bar 0 starts at the first beat of the music.
-
-        The relationship is:
-        - FramePadding = -first_beat_time (shifts audio left)
-        - FrameOffset = time_relative_to_first_beat (where each bar lands)
-        - Result: Bar 0 at FrameOffset=0 aligns with first beat in audio
+        FramePadding, this aligns the audio with the tab.
 
         Args:
             bar: Bar number (0-indexed)
@@ -627,7 +620,7 @@ class DriftAnalyzer:
         beat_index = bar * self.beats_per_bar
 
         if beat_index < len(self.beat_times):
-            # Calculate time RELATIVE to first beat (bar 0 = 0)
+            # Calculate time RELATIVE to first beat
             relative_time = self.beat_times[beat_index] - self.first_beat_time
             return int(relative_time * self.sample_rate)
         else:
