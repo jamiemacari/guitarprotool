@@ -613,6 +613,16 @@ def run_pipeline():
                     f"No tempo found in GP file, using detected BPM: {original_tempo:.1f}"
                 )
 
+            # Find where notes start in the tab (for bass isolation alignment)
+            tab_start_bar = 0
+            if bass_isolated:
+                tab_start_bar = modifier.get_first_note_bar()
+                if tab_start_bar > 0:
+                    logger.info(
+                        f"Tab has {tab_start_bar} intro bars before notes start "
+                        f"(first note at bar {tab_start_bar + 1})"
+                    )
+
             # Correct for double/half-time detection
             original_detected_bpm = beat_info.bpm
             beat_info = BeatDetector.correct_tempo_multiple(beat_info, original_tempo)
@@ -627,6 +637,12 @@ def run_pipeline():
                 console.print(
                     f"[yellow]Note:[/yellow] Tempo corrected from {original_detected_bpm:.1f} "
                     f"to {beat_info.bpm:.1f} BPM (reference tempo: {original_tempo:.1f})"
+                )
+
+            if tab_start_bar > 0:
+                console.print(
+                    f"[cyan]Tab alignment:[/cyan] First notes at bar {tab_start_bar + 1} "
+                    f"(skipping {tab_start_bar} intro bar{'s' if tab_start_bar > 1 else ''})"
                 )
 
             console.print()
@@ -651,6 +667,7 @@ def run_pipeline():
                         beat_times=beat_info.beat_times,
                         original_tempo=original_tempo,
                         beats_per_bar=4,
+                        tab_start_bar=tab_start_bar,
                     )
                     drift_report = analyzer.analyze(max_bars=max_bars)
                     # Add tempo correction info to report
@@ -679,6 +696,7 @@ def run_pipeline():
                     sync_interval=16,
                     max_bars=max_bars,
                     adaptive=True,  # Use adaptive tempo sync
+                    tab_start_bar=tab_start_bar,  # Align with first note bar
                 )
 
                 # Convert to XML modifier format

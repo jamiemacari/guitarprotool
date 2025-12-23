@@ -302,6 +302,7 @@ class BeatDetector:
         start_offset: float = 0.0,
         max_bars: Optional[int] = None,
         adaptive: bool = True,
+        tab_start_bar: int = 0,
     ) -> SyncResult:
         """Generate sync points for audio alignment with the tab.
 
@@ -325,6 +326,9 @@ class BeatDetector:
             adaptive: If True (default), use adaptive sync point placement with
                      local tempo detection. If False, use static intervals with
                      original_tempo for all sync points.
+            tab_start_bar: Bar number where notes begin in the tab (0-indexed).
+                          When set, aligns first detected beat with this bar instead
+                          of bar 0. Used when tabs have intro bars before music starts.
 
         Returns:
             SyncResult containing sync points and frame_padding for alignment
@@ -338,13 +342,22 @@ class BeatDetector:
         if len(beat_info.beat_times) < 2:
             raise BeatDetectionError("Need at least 2 beats to generate sync points")
 
-        # Use the first detected beat/onset as the starting point for bar 0
+        # Use the first detected beat/onset as the starting point
         first_beat_time = beat_info.beat_times[0] + start_offset
 
-        # FramePadding shifts the audio so bar 0 aligns with the first detected beat.
-        # A negative value means the audio starts earlier (shifts left in the waveform view).
-        # This accounts for any intro/silence before the first beat in the audio file.
-        frame_padding = -int(first_beat_time * self.sample_rate)
+        # FramePadding adjustment depends on whether we have tab_start_bar offset
+        if tab_start_bar > 0:
+            # When tab has intro bars, we use absolute frame offsets (from audio start)
+            # and FramePadding = 0 since bar 0 starts at audio time 0
+            frame_padding = 0
+            logger.info(
+                f"Tab start bar: {tab_start_bar} - using absolute frame offsets, "
+                f"first beat at {first_beat_time:.3f}s aligns with bar {tab_start_bar}"
+            )
+        else:
+            # Default behavior: FramePadding shifts audio so bar 0 aligns with first beat
+            # A negative value means the audio starts earlier (shifts left in waveform view)
+            frame_padding = -int(first_beat_time * self.sample_rate)
 
         # Calculate bar interval from sync_interval
         bar_interval = sync_interval // beats_per_bar
@@ -358,7 +371,8 @@ class BeatDetector:
 
         if adaptive:
             sync_points = self._generate_adaptive_sync_points(
-                beat_info, original_tempo, beats_per_bar, bar_interval, max_bars
+                beat_info, original_tempo, beats_per_bar, bar_interval, max_bars,
+                tab_start_bar=tab_start_bar
             )
         else:
             sync_points = self._generate_static_sync_points(
@@ -384,11 +398,20 @@ class BeatDetector:
         beats_per_bar: int,
         bar_interval: int,
         max_bars: int,
+        tab_start_bar: int = 0,
     ) -> List[SyncPointData]:
         """Generate sync points with adaptive tempo detection.
 
         Uses DriftAnalyzer to calculate local tempo at each sync point
         and place sync points more frequently where drift is significant.
+
+        Args:
+            beat_info: Beat detection results
+            original_tempo: Tab tempo in BPM
+            beats_per_bar: Beats per bar (4 for 4/4)
+            bar_interval: Base interval between sync points
+            max_bars: Maximum bar number from GP file
+            tab_start_bar: Bar where notes start in tab (for intro alignment)
         """
         from guitarprotool.core.drift_analyzer import DriftAnalyzer
         from guitarprotool.utils.exceptions import InsufficientBeatsError
@@ -399,6 +422,7 @@ class BeatDetector:
                 original_tempo=original_tempo,
                 beats_per_bar=beats_per_bar,
                 sample_rate=self.sample_rate,
+                tab_start_bar=tab_start_bar,
             )
             sync_points = analyzer.generate_adaptive_sync_points(
                 max_bars=max_bars,

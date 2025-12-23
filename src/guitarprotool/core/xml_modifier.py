@@ -514,3 +514,119 @@ class XMLModifier:
         self._ensure_loaded()
         assets = self._root.find("Assets")
         return assets is not None and len(assets) > 0
+
+    def get_first_note_bar(self, track_id: int = 0) -> int:
+        """Find the first bar where a track has actual notes (not rests).
+
+        This is useful for aligning audio with tabs that have intro bars
+        before the actual music starts.
+
+        Args:
+            track_id: Track ID to analyze (default 0, typically the first/only track)
+
+        Returns:
+            0-indexed bar number of the first bar with notes, or 0 if not found
+
+        Note:
+            The algorithm traverses: MasterBar → Bar → Voice → Beat → Notes
+            A bar is considered to have notes if any of its beats contain a <Notes> element.
+        """
+        self._ensure_loaded()
+
+        try:
+            # Build lookup dictionaries for efficient traversal
+            # Beat ID → has notes?
+            beats_with_notes = set()
+            beats_section = self._root.find("Beats")
+            if beats_section is not None:
+                for beat in beats_section.findall("Beat"):
+                    beat_id = beat.get("id")
+                    notes_elem = beat.find("Notes")
+                    if notes_elem is not None and notes_elem.text:
+                        beats_with_notes.add(beat_id)
+
+            # Voice ID → list of beat IDs
+            voice_beats = {}
+            voices_section = self._root.find("Voices")
+            if voices_section is not None:
+                for voice in voices_section.findall("Voice"):
+                    voice_id = voice.get("id")
+                    beats_elem = voice.find("Beats")
+                    if beats_elem is not None and beats_elem.text:
+                        voice_beats[voice_id] = beats_elem.text.strip().split()
+
+            # Bar ID → list of voice IDs
+            bar_voices = {}
+            bars_section = self._root.find("Bars")
+            if bars_section is not None:
+                for bar in bars_section.findall("Bar"):
+                    bar_id = bar.get("id")
+                    voices_elem = bar.find("Voices")
+                    if voices_elem is not None and voices_elem.text:
+                        # Voice IDs are space-separated, -1 means empty slot
+                        voice_ids = [v for v in voices_elem.text.strip().split() if v != "-1"]
+                        bar_voices[bar_id] = voice_ids
+
+            # Iterate through MasterBars to find first bar with notes
+            master_bars = self._root.find("MasterBars")
+            if master_bars is None:
+                logger.warning("MasterBars not found in XML")
+                return 0
+
+            for bar_index, master_bar in enumerate(master_bars.findall("MasterBar")):
+                bars_elem = master_bar.find("Bars")
+                if bars_elem is None or not bars_elem.text:
+                    continue
+
+                # Get bar ID for this master bar position
+                bar_id = bars_elem.text.strip()
+
+                # Check if this bar has any beats with notes
+                voice_ids = bar_voices.get(bar_id, [])
+                for voice_id in voice_ids:
+                    beat_ids = voice_beats.get(voice_id, [])
+                    for beat_id in beat_ids:
+                        if beat_id in beats_with_notes:
+                            logger.debug(f"First bar with notes: {bar_index} (bar_id={bar_id})")
+                            return bar_index
+
+            logger.warning("No bars with notes found")
+            return 0
+
+        except Exception as e:
+            logger.warning(f"Error finding first note bar: {e}")
+            return 0
+
+    def get_track_info(self) -> List[dict]:
+        """Get information about all tracks in the score.
+
+        Returns:
+            List of dicts with track id, name, and type
+        """
+        self._ensure_loaded()
+
+        tracks = []
+        tracks_section = self._root.find("Tracks")
+        if tracks_section is not None:
+            for track in tracks_section.findall("Track"):
+                track_id = track.get("id")
+                name_elem = track.find("Name")
+                name = name_elem.text if name_elem is not None else f"Track {track_id}"
+                # Clean CDATA if present
+                if name and name.startswith("<![CDATA["):
+                    name = name[9:-3]
+
+                instrument_set = track.find("InstrumentSet")
+                track_type = "unknown"
+                if instrument_set is not None:
+                    type_elem = instrument_set.find("Type")
+                    if type_elem is not None and type_elem.text:
+                        track_type = type_elem.text
+
+                tracks.append({
+                    "id": track_id,
+                    "name": name,
+                    "type": track_type,
+                })
+
+        return tracks

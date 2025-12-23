@@ -247,6 +247,7 @@ class DriftAnalyzer:
         original_tempo: float,
         beats_per_bar: int = 4,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
+        tab_start_bar: int = 0,
     ):
         """Initialize DriftAnalyzer.
 
@@ -255,6 +256,9 @@ class DriftAnalyzer:
             original_tempo: Tab tempo in BPM
             beats_per_bar: Beats per bar (4 for 4/4 time)
             sample_rate: Audio sample rate (default 44100)
+            tab_start_bar: Bar number where notes begin in the tab (0-indexed).
+                          This aligns the first detected beat with this bar instead of bar 0.
+                          Used when tabs have intro bars before the actual music starts.
 
         Raises:
             InsufficientBeatsError: If not enough beats for analysis
@@ -268,17 +272,19 @@ class DriftAnalyzer:
         self.original_tempo = original_tempo
         self.beats_per_bar = beats_per_bar
         self.sample_rate = sample_rate
+        self.tab_start_bar = tab_start_bar
 
         # Calculate expected beat interval
         self.expected_beat_interval = 60.0 / original_tempo
         self.expected_bar_duration = self.expected_beat_interval * beats_per_bar
 
-        # First beat time is our reference point (bar 0)
+        # First beat time is our reference point (aligns with tab_start_bar)
         self.first_beat_time = beat_times[0]
 
         logger.debug(
             f"DriftAnalyzer initialized: tempo={original_tempo}, "
-            f"beats={len(beat_times)}, first_beat={self.first_beat_time:.3f}s"
+            f"beats={len(beat_times)}, first_beat={self.first_beat_time:.3f}s, "
+            f"tab_start_bar={tab_start_bar}"
         )
 
     def analyze(self, max_bars: Optional[int] = None) -> DriftReport:
@@ -608,35 +614,65 @@ class DriftAnalyzer:
     def _calculate_frame_offset_for_bar(self, bar: int) -> int:
         """Calculate audio frame offset for a given bar.
 
-        Frame offsets are RELATIVE to the first detected beat. Combined with
-        the negative FramePadding (set in beat_detector.py), this aligns the
-        audio so that bar 0 starts at the first beat of the music.
+        When tab_start_bar > 0, this handles alignment for tabs with intro bars:
+        - Bars 0 to tab_start_bar-1: Interpolate from audio start (0) to first beat
+        - Bars tab_start_bar and later: Use absolute detected beat times
 
-        The relationship is:
-        - FramePadding = -first_beat_time (shifts audio left)
-        - FrameOffset = time_relative_to_first_beat (where each bar lands)
-        - Result: Bar 0 at FrameOffset=0 aligns with first beat in audio
+        When tab_start_bar is 0 (default), frame offsets are RELATIVE to first beat,
+        and FramePadding (set in beat_detector.py) shifts audio to align bar 0
+        with the first detected beat.
 
         Args:
             bar: Bar number (0-indexed)
 
         Returns:
-            Frame offset (samples at 44.1kHz, relative to first beat)
+            Frame offset (samples at 44.1kHz)
         """
-        # Find the beat index for this bar
-        beat_index = bar * self.beats_per_bar
+        if self.tab_start_bar > 0:
+            # Tab has intro bars - use absolute frame offsets
+            if bar < self.tab_start_bar:
+                # Intro bars before music starts: interpolate from 0 to first_beat_time
+                # Bar 0 = frame 0 (audio start)
+                # Bar tab_start_bar = first_beat_time
+                fraction = bar / self.tab_start_bar
+                interpolated_time = fraction * self.first_beat_time
+                return int(interpolated_time * self.sample_rate)
 
-        if beat_index < len(self.beat_times):
-            # Calculate time RELATIVE to first beat (bar 0 = 0)
-            relative_time = self.beat_times[beat_index] - self.first_beat_time
-            return int(relative_time * self.sample_rate)
+            # Adjust beat index by tab_start_bar offset
+            # If tab_start_bar=5, then bar 5 uses beat_index 0 (first beat)
+            adjusted_bar = bar - self.tab_start_bar
+            beat_index = adjusted_bar * self.beats_per_bar
+
+            if beat_index < len(self.beat_times):
+                # Use absolute detected beat time
+                beat_time = self.beat_times[beat_index]
+                return int(beat_time * self.sample_rate)
+            else:
+                # Beyond detected beats - extrapolate from last known beat
+                last_beat_idx = len(self.beat_times) - 1
+                last_beat_time = self.beat_times[last_beat_idx]
+                beats_beyond = beat_index - last_beat_idx
+
+                # Use expected interval for extrapolation
+                extra_time = beats_beyond * self.expected_beat_interval
+                extrapolated_time = last_beat_time + extra_time
+                return int(extrapolated_time * self.sample_rate)
         else:
-            # Beyond detected beats - extrapolate from last known beat
-            last_beat_idx = len(self.beat_times) - 1
-            last_beat_time = self.beat_times[last_beat_idx]
-            beats_beyond = beat_index - last_beat_idx
+            # Default behavior: frame offsets are RELATIVE to first beat (bar 0 = 0)
+            # Combined with negative FramePadding, this aligns bar 0 with first beat
+            beat_index = bar * self.beats_per_bar
 
-            # Use expected interval for extrapolation
-            extra_time = beats_beyond * self.expected_beat_interval
-            relative_time = (last_beat_time - self.first_beat_time) + extra_time
-            return int(relative_time * self.sample_rate)
+            if beat_index < len(self.beat_times):
+                # Calculate time RELATIVE to first beat (bar 0 = 0)
+                relative_time = self.beat_times[beat_index] - self.first_beat_time
+                return int(relative_time * self.sample_rate)
+            else:
+                # Beyond detected beats - extrapolate from last known beat
+                last_beat_idx = len(self.beat_times) - 1
+                last_beat_time = self.beat_times[last_beat_idx]
+                beats_beyond = beat_index - last_beat_idx
+
+                # Use expected interval for extrapolation
+                extra_time = beats_beyond * self.expected_beat_interval
+                relative_time = (last_beat_time - self.first_beat_time) + extra_time
+                return int(relative_time * self.sample_rate)
