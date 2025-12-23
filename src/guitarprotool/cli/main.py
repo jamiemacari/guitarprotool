@@ -55,6 +55,17 @@ except ImportError as e:
     AUDIO_PROCESSOR_AVAILABLE = False
     logger.warning(f"AudioProcessor not available: {e}")
 
+# Try to import BassIsolator - requires optional torch/demucs dependencies
+try:
+    from guitarprotool.core.bass_isolator import BassIsolator, IsolationResult
+
+    BASS_ISOLATION_AVAILABLE = BassIsolator.is_available()
+except ImportError:
+    BassIsolator = None  # type: ignore
+    IsolationResult = None  # type: ignore
+    BASS_ISOLATION_AVAILABLE = False
+    logger.debug("BassIsolator not available (optional dependency)")
+
 # Rich console for styled output (record=True enables session capture)
 console = Console(record=True)
 
@@ -332,6 +343,58 @@ def process_audio(
         return None
 
 
+def isolate_bass(
+    audio_path: Path,
+    output_dir: Path,
+    progress: Progress,
+) -> Optional[Path]:
+    """Isolate bass from audio for improved beat detection.
+
+    Args:
+        audio_path: Path to audio file
+        output_dir: Directory to save isolated audio
+        progress: Rich progress instance
+
+    Returns:
+        Path to isolated bass audio or None if isolation fails/unavailable
+    """
+    if not BASS_ISOLATION_AVAILABLE:
+        return None
+
+    task_id = progress.add_task("[cyan]Isolating bass (AI)...", total=100)
+
+    def update_progress(percent: float, status: str):
+        progress.update(task_id, completed=percent * 100, description=f"[cyan]{status}")
+
+    try:
+        isolator = BassIsolator(
+            output_dir=output_dir,
+            progress_callback=update_progress,
+        )
+
+        result = isolator.isolate(audio_path)
+
+        if result.success:
+            progress.update(
+                task_id,
+                completed=100,
+                description=f"[green]Bass isolated ({result.processing_time:.1f}s)",
+            )
+            return result.bass_path
+        else:
+            progress.update(
+                task_id,
+                completed=100,
+                description=f"[yellow]Isolation failed: {result.error_message}",
+            )
+            return None
+
+    except Exception as e:
+        progress.update(task_id, description=f"[yellow]Isolation failed: {e}")
+        logger.warning(f"Bass isolation failed, using full mix: {e}")
+        return None
+
+
 def detect_beats(
     audio_path: Path,
     progress: Progress,
@@ -512,8 +575,28 @@ def run_pipeline():
             if not audio_info:
                 raise AudioProcessingError("Failed to process audio")
 
-            # Detect beats
-            beat_info = detect_beats(audio_info.file_path, progress)
+            # Bass isolation for improved beat detection (enabled by default if available)
+            beat_detection_audio = audio_info.file_path
+            bass_isolated = False
+
+            if BASS_ISOLATION_AVAILABLE:
+                isolated_bass_path = isolate_bass(
+                    audio_info.file_path,
+                    audio_dir,
+                    progress,
+                )
+                if isolated_bass_path:
+                    beat_detection_audio = isolated_bass_path
+                    bass_isolated = True
+            else:
+                # Show one-time info about bass isolation availability
+                progress.console.print(
+                    "[dim]Tip: Install bass isolation for better sync with ambient intros:[/dim]\n"
+                    "[dim]    pip install guitarprotool[bass-isolation][/dim]"
+                )
+
+            # Detect beats (using isolated bass if available, otherwise full mix)
+            beat_info = detect_beats(beat_detection_audio, progress)
             if not beat_info:
                 raise BeatDetectionError("Failed to detect beats")
 
@@ -702,6 +785,7 @@ def run_pipeline():
 
         # Success!
         console.print()
+        bass_info = "Bass isolation: Yes (AI-enhanced)" if bass_isolated else "Bass isolation: No"
         console.print(
             Panel(
                 f"[bold green]Success![/bold green]\n\n"
@@ -709,7 +793,8 @@ def run_pipeline():
                 f"[dim]Detected BPM: {beat_info.bpm:.1f}\n"
                 f"Sync points: {len(sync_points)}\n"
                 f"Original tempo: {original_tempo:.1f}\n"
-                f"Audio offset: {sync_result.first_beat_time:.3f}s[/dim]\n\n"
+                f"Audio offset: {sync_result.first_beat_time:.3f}s\n"
+                f"{bass_info}[/dim]\n\n"
                 f"[dim]All testing artifacts saved to:\n{troubleshoot_dir}[/dim]",
                 title="Complete",
                 border_style="green",
