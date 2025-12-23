@@ -637,9 +637,9 @@ class DriftAnalyzer:
 
         When tab_start_bar > 0:
         - Bars before tab_start_bar should NOT have sync points (handled by caller)
-        - Bars at/after tab_start_bar use RELATIVE offsets from first beat
-        - FramePadding (in beat_detector.py) shifts audio so bar tab_start_bar
-          aligns with the first detected beat
+        - Bars at/after tab_start_bar use ABSOLUTE audio positions
+        - GP8 interprets FrameOffset as the absolute position in the audio file
+          where this bar should sync
 
         When tab_start_bar is 0 (default), frame offsets are RELATIVE to first beat,
         and FramePadding shifts audio to align bar 0 with the first detected beat.
@@ -648,19 +648,19 @@ class DriftAnalyzer:
             bar: Bar number (0-indexed)
 
         Returns:
-            Frame offset (samples at 44.1kHz, relative to first beat)
+            Frame offset (samples at 44.1kHz)
         """
         if self.tab_start_bar > 0:
-            # For tabs with intro bars, we use relative offsets from first beat
-            # Bar tab_start_bar = frame 0 (aligns with first detected beat)
+            # For tabs with intro bars, we use ABSOLUTE audio positions
+            # GP8 needs to know exactly where in the audio file each bar is
             # Bars before tab_start_bar should not have sync points
 
             if bar < self.tab_start_bar:
                 # Intro bars: shouldn't normally be called, but calculate anyway
-                # These bars don't have beats detected, so use expected tempo
+                # These bars don't have beats detected, so extrapolate backward
                 bars_before_music = self.tab_start_bar - bar
-                relative_time = -bars_before_music * self.expected_bar_duration
-                return int(relative_time * self.sample_rate)
+                absolute_time = self.first_beat_time - (bars_before_music * self.expected_bar_duration)
+                return int(max(0, absolute_time) * self.sample_rate)
 
             # Adjust beat index by tab_start_bar offset
             # If tab_start_bar=5, then bar 5 uses beat_index 0 (first beat)
@@ -668,9 +668,9 @@ class DriftAnalyzer:
             beat_index = adjusted_bar * self.beats_per_bar
 
             if beat_index < len(self.beat_times):
-                # Calculate time RELATIVE to first beat (bar tab_start_bar = 0)
-                relative_time = self.beat_times[beat_index] - self.first_beat_time
-                return int(relative_time * self.sample_rate)
+                # Use ABSOLUTE audio position (not relative to first beat)
+                absolute_time = self.beat_times[beat_index]
+                return int(absolute_time * self.sample_rate)
             else:
                 # Beyond detected beats - extrapolate from last known beat
                 last_beat_idx = len(self.beat_times) - 1
@@ -679,8 +679,8 @@ class DriftAnalyzer:
 
                 # Use expected interval for extrapolation
                 extra_time = beats_beyond * self.expected_beat_interval
-                relative_time = (last_beat_time - self.first_beat_time) + extra_time
-                return int(relative_time * self.sample_rate)
+                absolute_time = last_beat_time + extra_time
+                return int(absolute_time * self.sample_rate)
         else:
             # Default behavior: frame offsets are RELATIVE to first beat (bar 0 = 0)
             # Combined with negative FramePadding, this aligns bar 0 with first beat

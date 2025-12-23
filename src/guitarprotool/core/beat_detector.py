@@ -347,22 +347,21 @@ class BeatDetector:
 
         # FramePadding adjustment depends on whether we have tab_start_bar offset
         if tab_start_bar > 0:
-            # Calculate expected intro duration from tab tempo
+            # When tab_start_bar > 0, DriftAnalyzer uses ABSOLUTE frame offsets
+            # (i.e., actual positions in the audio file for each bar).
+            # GP8 adds FramePadding to each FrameOffset, so we must set FramePadding = 0
+            # to avoid double-counting. The absolute offsets already encode where each
+            # bar should be in the audio.
+            frame_padding = 0
+
+            # Log alignment info for debugging
             seconds_per_beat = 60.0 / original_tempo
             seconds_per_bar = seconds_per_beat * beats_per_bar
             expected_intro_duration = tab_start_bar * seconds_per_bar
 
-            # Offset = how much longer the audio intro is than the tab expects
-            # If audio intro is 23.5s but tab expects 15s, offset is 8.5s
-            intro_offset = first_beat_time - expected_intro_duration
-
-            # FramePadding shifts audio so bar 0 starts at audio time = intro_offset
-            # This way bar 5 aligns with first_beat_time in the audio
-            frame_padding = -int(intro_offset * self.sample_rate)
-
             logger.info(
                 f"Tab start bar: {tab_start_bar} - expected intro: {expected_intro_duration:.3f}s, "
-                f"audio intro: {first_beat_time:.3f}s, offset: {intro_offset:.3f}s"
+                f"audio intro: {first_beat_time:.3f}s (using absolute frame offsets, FramePadding=0)"
             )
         else:
             # Default behavior: FramePadding shifts audio so bar 0 aligns with first beat
