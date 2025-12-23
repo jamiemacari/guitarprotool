@@ -55,6 +55,17 @@ except ImportError as e:
     AUDIO_PROCESSOR_AVAILABLE = False
     logger.warning(f"AudioProcessor not available: {e}")
 
+# Try to import BassIsolator - requires optional torch/demucs dependencies
+try:
+    from guitarprotool.core.bass_isolator import BassIsolator, IsolationResult
+
+    BASS_ISOLATION_AVAILABLE = BassIsolator.is_available()
+except ImportError:
+    BassIsolator = None  # type: ignore
+    IsolationResult = None  # type: ignore
+    BASS_ISOLATION_AVAILABLE = False
+    logger.debug("BassIsolator not available (optional dependency)")
+
 # Rich console for styled output (record=True enables session capture)
 console = Console(record=True)
 
@@ -332,6 +343,58 @@ def process_audio(
         return None
 
 
+def isolate_bass(
+    audio_path: Path,
+    output_dir: Path,
+    progress: Progress,
+) -> Optional[Path]:
+    """Isolate bass from audio for improved beat detection.
+
+    Args:
+        audio_path: Path to audio file
+        output_dir: Directory to save isolated audio
+        progress: Rich progress instance
+
+    Returns:
+        Path to isolated bass audio or None if isolation fails/unavailable
+    """
+    if not BASS_ISOLATION_AVAILABLE:
+        return None
+
+    task_id = progress.add_task("[cyan]Isolating bass (AI)...", total=100)
+
+    def update_progress(percent: float, status: str):
+        progress.update(task_id, completed=percent * 100, description=f"[cyan]{status}")
+
+    try:
+        isolator = BassIsolator(
+            output_dir=output_dir,
+            progress_callback=update_progress,
+        )
+
+        result = isolator.isolate(audio_path)
+
+        if result.success:
+            progress.update(
+                task_id,
+                completed=100,
+                description=f"[green]Bass isolated ({result.processing_time:.1f}s)",
+            )
+            return result.bass_path
+        else:
+            progress.update(
+                task_id,
+                completed=100,
+                description=f"[yellow]Isolation failed: {result.error_message}",
+            )
+            return None
+
+    except Exception as e:
+        progress.update(task_id, description=f"[yellow]Isolation failed: {e}")
+        logger.warning(f"Bass isolation failed, using full mix: {e}")
+        return None
+
+
 def detect_beats(
     audio_path: Path,
     progress: Progress,
@@ -512,7 +575,33 @@ def run_pipeline():
             if not audio_info:
                 raise AudioProcessingError("Failed to process audio")
 
-            # Detect beats
+            # Bass isolation for finding bass start time (used for intro alignment)
+            # Beat detection uses ORIGINAL audio for accurate sync point timing
+            bass_isolated = False
+            bass_first_beat_time = None
+
+            if BASS_ISOLATION_AVAILABLE:
+                isolated_bass_path = isolate_bass(
+                    audio_info.file_path,
+                    audio_dir,
+                    progress,
+                )
+                if isolated_bass_path:
+                    bass_isolated = True
+                    # Detect beats on isolated bass to find where bass starts
+                    bass_beat_info = detect_beats(isolated_bass_path, progress)
+                    if bass_beat_info and bass_beat_info.beat_times:
+                        bass_first_beat_time = bass_beat_info.beat_times[0]
+                        logger.info(f"Bass start detected at: {bass_first_beat_time:.3f}s")
+            else:
+                # Show one-time info about bass isolation availability
+                progress.console.print(
+                    "[dim]Tip: Install bass isolation for better sync with ambient intros:[/dim]\n"
+                    "[dim]    pip install guitarprotool[bass-isolation][/dim]"
+                )
+
+            # Detect beats on ORIGINAL audio for accurate sync point timing
+            # (Bass isolation is only used to find where bass starts, not for sync)
             beat_info = detect_beats(audio_info.file_path, progress)
             if not beat_info:
                 raise BeatDetectionError("Failed to detect beats")
@@ -530,6 +619,41 @@ def run_pipeline():
                     f"No tempo found in GP file, using detected BPM: {original_tempo:.1f}"
                 )
 
+            # Find where notes start in the tab (for bass isolation alignment)
+            tab_start_bar = 0
+            if bass_isolated and bass_first_beat_time is not None:
+                tab_start_bar = modifier.get_first_note_bar()
+                if tab_start_bar > 0:
+                    # Find the beat in original audio closest to bass start time
+                    # This aligns original audio beats with where bass actually starts
+                    min_diff = float('inf')
+                    bass_beat_index = 0
+                    for i, bt in enumerate(beat_info.beat_times):
+                        diff = abs(bt - bass_first_beat_time)
+                        if diff < min_diff:
+                            min_diff = diff
+                            bass_beat_index = i
+
+                    # Shift beat times so that bass_beat_index becomes beat 0
+                    # This makes the first beat align with where bass starts
+                    original_first_beat = beat_info.beat_times[0]
+                    aligned_beat_times = [
+                        bt - beat_info.beat_times[bass_beat_index] + bass_first_beat_time
+                        for bt in beat_info.beat_times[bass_beat_index:]
+                    ]
+                    beat_info = BeatInfo(
+                        bpm=beat_info.bpm,
+                        beat_times=aligned_beat_times,
+                        confidence=beat_info.confidence,
+                    )
+
+                    logger.info(
+                        f"Tab has {tab_start_bar} intro bars before notes start "
+                        f"(first note at bar {tab_start_bar + 1}). "
+                        f"Aligned to bass start at {bass_first_beat_time:.3f}s "
+                        f"(shifted from beat {bass_beat_index})"
+                    )
+
             # Correct for double/half-time detection
             original_detected_bpm = beat_info.bpm
             beat_info = BeatDetector.correct_tempo_multiple(beat_info, original_tempo)
@@ -544,6 +668,12 @@ def run_pipeline():
                 console.print(
                     f"[yellow]Note:[/yellow] Tempo corrected from {original_detected_bpm:.1f} "
                     f"to {beat_info.bpm:.1f} BPM (reference tempo: {original_tempo:.1f})"
+                )
+
+            if tab_start_bar > 0:
+                console.print(
+                    f"[cyan]Tab alignment:[/cyan] First notes at bar {tab_start_bar + 1} "
+                    f"(skipping {tab_start_bar} intro bar{'s' if tab_start_bar > 1 else ''})"
                 )
 
             console.print()
@@ -568,6 +698,7 @@ def run_pipeline():
                         beat_times=beat_info.beat_times,
                         original_tempo=original_tempo,
                         beats_per_bar=4,
+                        tab_start_bar=tab_start_bar,
                     )
                     drift_report = analyzer.analyze(max_bars=max_bars)
                     # Add tempo correction info to report
@@ -596,6 +727,7 @@ def run_pipeline():
                     sync_interval=16,
                     max_bars=max_bars,
                     adaptive=True,  # Use adaptive tempo sync
+                    tab_start_bar=tab_start_bar,  # Align with first note bar
                 )
 
                 # Convert to XML modifier format
@@ -702,6 +834,7 @@ def run_pipeline():
 
         # Success!
         console.print()
+        bass_info = "Bass isolation: Yes (AI-enhanced)" if bass_isolated else "Bass isolation: No"
         console.print(
             Panel(
                 f"[bold green]Success![/bold green]\n\n"
@@ -709,7 +842,8 @@ def run_pipeline():
                 f"[dim]Detected BPM: {beat_info.bpm:.1f}\n"
                 f"Sync points: {len(sync_points)}\n"
                 f"Original tempo: {original_tempo:.1f}\n"
-                f"Audio offset: {sync_result.first_beat_time:.3f}s[/dim]\n\n"
+                f"Audio offset: {sync_result.first_beat_time:.3f}s\n"
+                f"{bass_info}[/dim]\n\n"
                 f"[dim]All testing artifacts saved to:\n{troubleshoot_dir}[/dim]",
                 title="Complete",
                 border_style="green",

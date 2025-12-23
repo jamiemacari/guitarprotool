@@ -38,7 +38,15 @@ dependencies = [
 
 [project.optional-dependencies]
 beat-detection = [
-    "aubio>=0.4.9",
+    "librosa>=0.10.0",
+]
+bass-isolation = [
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "demucs>=4.0.0",
+]
+full = [
+    "guitarprotool[beat-detection,bass-isolation]",
 ]
 dev = [
     "pytest>=8.0.0",

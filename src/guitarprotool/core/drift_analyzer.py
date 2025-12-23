@@ -247,6 +247,7 @@ class DriftAnalyzer:
         original_tempo: float,
         beats_per_bar: int = 4,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
+        tab_start_bar: int = 0,
     ):
         """Initialize DriftAnalyzer.
 
@@ -255,6 +256,9 @@ class DriftAnalyzer:
             original_tempo: Tab tempo in BPM
             beats_per_bar: Beats per bar (4 for 4/4 time)
             sample_rate: Audio sample rate (default 44100)
+            tab_start_bar: Bar number where notes begin in the tab (0-indexed).
+                          This aligns the first detected beat with this bar instead of bar 0.
+                          Used when tabs have intro bars before the actual music starts.
 
         Raises:
             InsufficientBeatsError: If not enough beats for analysis
@@ -268,17 +272,19 @@ class DriftAnalyzer:
         self.original_tempo = original_tempo
         self.beats_per_bar = beats_per_bar
         self.sample_rate = sample_rate
+        self.tab_start_bar = tab_start_bar
 
         # Calculate expected beat interval
         self.expected_beat_interval = 60.0 / original_tempo
         self.expected_bar_duration = self.expected_beat_interval * beats_per_bar
 
-        # First beat time is our reference point (bar 0)
+        # First beat time is our reference point (aligns with tab_start_bar)
         self.first_beat_time = beat_times[0]
 
         logger.debug(
             f"DriftAnalyzer initialized: tempo={original_tempo}, "
-            f"beats={len(beat_times)}, first_beat={self.first_beat_time:.3f}s"
+            f"beats={len(beat_times)}, first_beat={self.first_beat_time:.3f}s, "
+            f"tab_start_bar={tab_start_bar}"
         )
 
     def analyze(self, max_bars: Optional[int] = None) -> DriftReport:
@@ -365,22 +371,43 @@ class DriftAnalyzer:
     def get_drift_at_bar(self, bar: int) -> Optional[BarDriftInfo]:
         """Get drift information for a specific bar.
 
+        When tab_start_bar > 0, adjusts beat index so that bar tab_start_bar
+        corresponds to beat 0 (first detected beat), and uses nearest-beat matching
+        to find the bar position.
+
+        When tab_start_bar == 0 (default), uses direct beat indexing which correctly
+        maps bar N to beat N*beats_per_bar, regardless of tempo differences between
+        the audio and tab.
+
         Args:
             bar: Bar number (0-indexed)
 
         Returns:
             BarDriftInfo or None if bar is out of range
         """
-        # Calculate expected time for this bar (relative to first beat)
-        expected_time = bar * self.expected_bar_duration
-
-        # Find actual time from beat detection
-        beat_index = bar * self.beats_per_bar
-        if beat_index >= len(self.beat_times):
+        # For bars before tab_start_bar, we don't have beat data
+        if bar < self.tab_start_bar:
             return None
 
+        # Calculate expected time for this bar (relative to first beat/tab_start_bar)
+        bars_from_start = bar - self.tab_start_bar
+        expected_time = bars_from_start * self.expected_bar_duration
+
+        if self.tab_start_bar > 0:
+            # For tabs with intro bars, use nearest-beat matching
+            # This handles alignment when first detected beat is at tab_start_bar
+            beat_idx = self._find_nearest_beat_to_expected(bars_from_start)
+            if beat_idx is None:
+                return None
+        else:
+            # Default: use direct indexing (bar N -> beat N*beats_per_bar)
+            # This correctly maps bars to beats even when audio tempo differs from tab
+            beat_idx = bars_from_start * self.beats_per_bar
+            if beat_idx >= len(self.beat_times):
+                return None
+
         # Actual time relative to first beat
-        actual_time = self.beat_times[beat_index] - self.first_beat_time
+        actual_time = self.beat_times[beat_idx] - self.first_beat_time
 
         # Calculate local tempo at this position
         local_tempo = self.calculate_local_tempo_at_bar(bar)
@@ -399,6 +426,9 @@ class DriftAnalyzer:
         Uses a sliding window of beats around the bar start to calculate
         the median tempo, which is more robust to outliers.
 
+        When tab_start_bar > 0, adjusts beat index so that bar tab_start_bar
+        corresponds to beat 0 (first detected beat).
+
         Args:
             bar: Bar number (0-indexed)
             window_beats: Number of beats to consider around the bar
@@ -406,8 +436,13 @@ class DriftAnalyzer:
         Returns:
             Local tempo in BPM
         """
-        # Find beat index for this bar
-        beat_index = bar * self.beats_per_bar
+        # For bars before tab_start_bar, return original tempo
+        if bar < self.tab_start_bar:
+            return self.original_tempo
+
+        # Find beat index for this bar (adjusted for tab_start_bar)
+        bars_from_start = bar - self.tab_start_bar
+        beat_index = bars_from_start * self.beats_per_bar
 
         if beat_index >= len(self.beat_times):
             # Beyond detected beats, return original tempo
@@ -443,6 +478,10 @@ class DriftAnalyzer:
         where tempo is stable. Each sync point includes the calculated
         modified_tempo for that position.
 
+        When tab_start_bar > 0, an intro sync point is added at bar 0 with a
+        stretched tempo that makes bars 0 through (tab_start_bar-1) cover the
+        audio intro duration (first_beat_time seconds).
+
         Args:
             max_bars: Maximum bar number from GP file
             base_interval: Base interval between sync points (bars)
@@ -454,6 +493,28 @@ class DriftAnalyzer:
         positions = self._find_sync_point_positions(max_bars, base_interval)
 
         sync_points: List[SyncPointData] = []
+
+        # When tab_start_bar > 0, add an intro sync point at bar 0
+        # This stretches the intro bars to match the audio intro duration
+        if self.tab_start_bar > 0:
+            # Calculate stretched tempo for intro bars
+            # Expected intro at tab tempo vs actual audio intro
+            expected_intro_duration = self.tab_start_bar * self.expected_bar_duration
+            # Stretched tempo = original_tempo * (expected / actual)
+            intro_tempo = self.original_tempo * (expected_intro_duration / self.first_beat_time)
+
+            intro_sync_point = SyncPointData(
+                bar=0,
+                frame_offset=0,  # Intro starts at beginning of audio
+                modified_tempo=intro_tempo,
+                original_tempo=self.original_tempo,
+            )
+            sync_points.append(intro_sync_point)
+
+            logger.info(
+                f"Intro sync point: bar=0, tempo={intro_tempo:.3f} BPM "
+                f"(stretches {self.tab_start_bar} bars over {self.first_beat_time:.3f}s)"
+            )
 
         for bar in positions:
             local_tempo = self.calculate_local_tempo_at_bar(bar)
@@ -557,6 +618,56 @@ class DriftAnalyzer:
         output_path.write_text("\n".join(lines))
         logger.info(f"Debug beat data written to: {output_path}")
 
+    def _find_nearest_beat_to_expected(self, bars_from_start: int) -> Optional[int]:
+        """Find the beat index nearest to the expected bar position.
+
+        Instead of using direct indexing (bar * beats_per_bar), this finds
+        the detected beat closest to where the bar should be based on tempo.
+        This is more robust to false beat detections that would otherwise
+        shift subsequent bar timings.
+
+        Args:
+            bars_from_start: Number of bars from tab_start_bar (0 = first bar with notes)
+
+        Returns:
+            Index into beat_times of the nearest beat, or None if beyond audio
+        """
+        if not self.beat_times:
+            return None
+
+        # Calculate expected absolute time for this bar
+        expected_absolute_time = self.first_beat_time + (bars_from_start * self.expected_bar_duration)
+
+        # If expected time is beyond our detected beats, return None
+        last_beat_time = self.beat_times[-1]
+        if expected_absolute_time > last_beat_time + self.expected_bar_duration:
+            return None
+
+        # Find the beat closest to expected time
+        min_diff = float('inf')
+        nearest_idx = 0
+
+        # Start search from an estimated index to be more efficient
+        estimated_idx = bars_from_start * self.beats_per_bar
+        search_start = max(0, estimated_idx - self.beats_per_bar * 2)
+        search_end = min(len(self.beat_times), estimated_idx + self.beats_per_bar * 2)
+
+        for i in range(search_start, search_end):
+            diff = abs(self.beat_times[i] - expected_absolute_time)
+            if diff < min_diff:
+                min_diff = diff
+                nearest_idx = i
+
+        # Sanity check: the nearest beat shouldn't be more than half a bar away
+        max_tolerance = self.expected_bar_duration / 2
+        if min_diff > max_tolerance:
+            logger.warning(
+                f"Nearest beat for bar {bars_from_start} is {min_diff:.3f}s away "
+                f"(tolerance: {max_tolerance:.3f}s)"
+            )
+
+        return nearest_idx
+
     def _find_sync_point_positions(
         self,
         max_bars: int,
@@ -565,11 +676,14 @@ class DriftAnalyzer:
         """Determine optimal bar positions for sync points.
 
         Algorithm:
-        1. Always place sync point at bar 0
+        1. Always place sync point at first bar with notes (tab_start_bar or 0)
         2. Evaluate drift at each bar
         3. If drift exceeds threshold, add sync point
         4. Ensure minimum spacing between sync points
         5. Never exceed max_interval without a sync point
+
+        When tab_start_bar > 0, sync points start from tab_start_bar.
+        Intro bars (0 to tab_start_bar-1) are skipped - they play at tab tempo.
 
         Args:
             max_bars: Maximum bar number
@@ -578,10 +692,12 @@ class DriftAnalyzer:
         Returns:
             List of bar numbers for sync point placement
         """
-        positions = [0]  # Always start at bar 0
-        last_sync_bar = 0
+        # Start from tab_start_bar (where notes begin) or 0 if no intro
+        start_bar = self.tab_start_bar
+        positions = [start_bar]  # Always start at first bar with notes
+        last_sync_bar = start_bar
 
-        for bar in range(1, max_bars):
+        for bar in range(start_bar + 1, max_bars):
             bars_since_last = bar - last_sync_bar
 
             # Check if we must place a sync point (max interval reached)
@@ -608,35 +724,60 @@ class DriftAnalyzer:
     def _calculate_frame_offset_for_bar(self, bar: int) -> int:
         """Calculate audio frame offset for a given bar.
 
-        Frame offsets are RELATIVE to the first detected beat. Combined with
-        the negative FramePadding (set in beat_detector.py), this aligns the
-        audio so that bar 0 starts at the first beat of the music.
+        Uses nearest-beat matching instead of direct indexing to be robust
+        to false beat detections that would otherwise shift subsequent bars.
 
-        The relationship is:
-        - FramePadding = -first_beat_time (shifts audio left)
-        - FrameOffset = time_relative_to_first_beat (where each bar lands)
-        - Result: Bar 0 at FrameOffset=0 aligns with first beat in audio
+        When tab_start_bar > 0:
+        - Bars before tab_start_bar should NOT have sync points (handled by caller)
+        - Bars at/after tab_start_bar use ABSOLUTE audio positions
+        - GP8 interprets FrameOffset as the absolute position in the audio file
+          where this bar should sync
+
+        When tab_start_bar is 0 (default), frame offsets are RELATIVE to first beat,
+        and FramePadding shifts audio to align bar 0 with the first detected beat.
 
         Args:
             bar: Bar number (0-indexed)
 
         Returns:
-            Frame offset (samples at 44.1kHz, relative to first beat)
+            Frame offset (samples at 44.1kHz)
         """
-        # Find the beat index for this bar
-        beat_index = bar * self.beats_per_bar
+        if self.tab_start_bar > 0:
+            # For tabs with intro bars, we use ABSOLUTE audio positions
+            # GP8 needs to know exactly where in the audio file each bar is
 
-        if beat_index < len(self.beat_times):
-            # Calculate time RELATIVE to first beat (bar 0 = 0)
-            relative_time = self.beat_times[beat_index] - self.first_beat_time
-            return int(relative_time * self.sample_rate)
+            if bar < self.tab_start_bar:
+                # Intro bars: shouldn't normally be called, but calculate anyway
+                # These bars don't have beats detected, so extrapolate backward
+                bars_before_music = self.tab_start_bar - bar
+                absolute_time = self.first_beat_time - (bars_before_music * self.expected_bar_duration)
+                return int(max(0, absolute_time) * self.sample_rate)
+
+            # Use nearest-beat matching for robustness against false beats
+            adjusted_bar = bar - self.tab_start_bar
+            nearest_beat_idx = self._find_nearest_beat_to_expected(adjusted_bar)
+
+            if nearest_beat_idx is not None:
+                # Use ABSOLUTE audio position (not relative to first beat)
+                absolute_time = self.beat_times[nearest_beat_idx]
+                return int(absolute_time * self.sample_rate)
+            else:
+                # Beyond detected beats - extrapolate from expected position
+                expected_absolute_time = self.first_beat_time + (adjusted_bar * self.expected_bar_duration)
+                return int(expected_absolute_time * self.sample_rate)
         else:
-            # Beyond detected beats - extrapolate from last known beat
-            last_beat_idx = len(self.beat_times) - 1
-            last_beat_time = self.beat_times[last_beat_idx]
-            beats_beyond = beat_index - last_beat_idx
+            # Default behavior: frame offsets are RELATIVE to first beat (bar 0 = 0)
+            # Combined with negative FramePadding, this aligns bar 0 with first beat
 
-            # Use expected interval for extrapolation
-            extra_time = beats_beyond * self.expected_beat_interval
-            relative_time = (last_beat_time - self.first_beat_time) + extra_time
-            return int(relative_time * self.sample_rate)
+            # Use direct indexing (bar N -> beat N*beats_per_bar)
+            # This correctly maps bars to beats even when audio tempo differs from tab
+            beat_idx = bar * self.beats_per_bar
+
+            if beat_idx < len(self.beat_times):
+                # Calculate time RELATIVE to first beat (bar 0 = 0)
+                relative_time = self.beat_times[beat_idx] - self.first_beat_time
+                return int(relative_time * self.sample_rate)
+            else:
+                # Beyond detected beats - extrapolate from expected position
+                expected_relative_time = bar * self.expected_bar_duration
+                return int(expected_relative_time * self.sample_rate)

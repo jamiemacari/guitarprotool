@@ -263,6 +263,17 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 - Manual validation in Guitar Pro 8
 - Performance testing with long audio files
 
+**Phase 7: Bass Isolation** ✅ COMPLETE
+- ✅ BassIsolator class with Demucs v4 (Hybrid Transformer) integration
+- ✅ Optional dependency management (torch, torchaudio, demucs)
+- ✅ CLI integration with automatic fallback to full-mix beat detection
+- ✅ Progress feedback for long-running isolation (~1.5x audio duration)
+- ✅ GPU (CUDA) auto-detection with CPU fallback
+- ✅ Test suite with mocked dependencies
+- Location: `src/guitarprotool/core/bass_isolator.py`
+- Tests: `tests/test_bass_isolator.py`
+- Install: `pip install guitarprotool[bass-isolation]`
+
 ## Important Implementation Notes
 
 ### AudioProcessor (Implemented):
@@ -297,6 +308,21 @@ This handles BPM drift in recordings. More frequent sync points = more accurate 
 - Data classes: `BeatInfo`, `SyncPointData`
 - Location: `src/guitarprotool/core/beat_detector.py`
 - Tests: `tests/test_beat_detector.py` (tests need updating for librosa)
+
+### BassIsolator (Implemented):
+- ✅ Uses Demucs v4 Hybrid Transformer for state-of-the-art source separation
+- ✅ Isolates bass track for improved beat detection (especially for ambient intros)
+- ✅ `BassIsolator.isolate(audio_path)` - Returns IsolationResult with path to isolated bass
+- ✅ `BassIsolator.is_available()` - Check if dependencies are installed
+- ✅ `BassIsolator.get_device_info()` - Get CUDA/CPU device information
+- ✅ Lazy model loading (loads on first isolation call)
+- ✅ Progress callback support for UI integration
+- ✅ Graceful fallback: if isolation fails, beat detection uses original audio
+- Data classes: `IsolationResult`
+- Models supported: `htdemucs` (default), `htdemucs_ft`, `hdemucs_mmi`, `htdemucs_6s`
+- Location: `src/guitarprotool/core/bass_isolator.py`
+- Tests: `tests/test_bass_isolator.py`
+- **Optional dependency**: Install with `pip install guitarprotool[bass-isolation]`
 
 ### CLI (Implemented):
 - ✅ Uses `questionary.path()` for file selection with validation

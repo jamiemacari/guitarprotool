@@ -89,6 +89,24 @@ class AudioValidationError(AudioProcessingError):
     pass
 
 
+class IsolationError(AudioProcessingError):
+    """Base class for errors during audio source separation."""
+
+    pass
+
+
+class ModelNotAvailableError(IsolationError):
+    """Raised when the specified separation model is not available."""
+
+    pass
+
+
+class IsolationDependencyError(IsolationError):
+    """Raised when required dependencies (torch, torchaudio, demucs) are not installed."""
+
+    pass
+
+
 class BeatDetectionError(GuitarProToolError):
     """Base class for errors during beat detection."""
 
