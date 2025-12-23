@@ -182,10 +182,12 @@ class TestDriftAnalyzerSyncPoints:
         if len(sync_points) > 1:
             assert sync_points[1].frame_offset > 0
 
-    def test_frame_offset_uses_actual_beat_times(self):
-        """Test that frame offsets use actual detected beat times, not expected times.
+    def test_frame_offset_uses_nearest_beat(self):
+        """Test that frame offsets use nearest detected beat, not direct indexing.
 
-        This is critical for accurate audio alignment when there's tempo drift.
+        This is critical for handling false beat detections that would otherwise
+        shift subsequent bar timings. The algorithm finds the beat nearest to
+        the expected bar position based on tab tempo.
         """
         # Create beat times with tempo drift (faster than expected 120 BPM)
         # Beat at 130 BPM = 60/130 = 0.4615s per beat
@@ -195,19 +197,23 @@ class TestDriftAnalyzerSyncPoints:
 
         sync_points = analyzer.generate_adaptive_sync_points(max_bars=20, base_interval=4)
 
-        # Find sync point at bar 4 (beat index 16)
+        # Find sync point at bar 4
         bar_4_sync = next((sp for sp in sync_points if sp.bar == 4), None)
         assert bar_4_sync is not None
 
         # Expected time at 120 BPM: 4 bars * 4 beats * 0.5s = 8.0s
-        expected_frame_at_120bpm = int(8.0 * 44100)  # 352800 frames
+        expected_position = 8.0
+        expected_frame_at_120bpm = int(expected_position * 44100)  # 352800 frames
 
-        # Actual time at 130 BPM: 16 beats * 0.4615s = 7.384s
-        actual_beat_time = beat_times[16] - beat_times[0]
-        actual_frame = int(actual_beat_time * 44100)  # ~325759 frames
+        # With nearest-beat matching, we find the beat closest to 8.0s:
+        # Beat 17 at 7.846s (diff 0.154s) vs Beat 16 at 7.384s (diff 0.616s)
+        # Beat 17 is closer, so we use it
+        nearest_beat_time = beat_times[17] - beat_times[0]
+        nearest_beat_frame = int(nearest_beat_time * 44100)
 
-        # Frame offset should be based on ACTUAL beat time, not expected
-        assert bar_4_sync.frame_offset == actual_frame
+        # Frame offset should be based on NEAREST beat to expected position
+        assert bar_4_sync.frame_offset == nearest_beat_frame
+        # And should definitely not be the tab-tempo expected time
         assert bar_4_sync.frame_offset != expected_frame_at_120bpm
 
     def test_frame_offset_extrapolates_beyond_detected_beats(self):
