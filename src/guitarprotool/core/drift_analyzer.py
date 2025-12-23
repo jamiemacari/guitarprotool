@@ -465,6 +465,10 @@ class DriftAnalyzer:
         where tempo is stable. Each sync point includes the calculated
         modified_tempo for that position.
 
+        When tab_start_bar > 0, an intro sync point is added at bar 0 with a
+        stretched tempo that makes bars 0 through (tab_start_bar-1) cover the
+        audio intro duration (first_beat_time seconds).
+
         Args:
             max_bars: Maximum bar number from GP file
             base_interval: Base interval between sync points (bars)
@@ -476,6 +480,28 @@ class DriftAnalyzer:
         positions = self._find_sync_point_positions(max_bars, base_interval)
 
         sync_points: List[SyncPointData] = []
+
+        # When tab_start_bar > 0, add an intro sync point at bar 0
+        # This stretches the intro bars to match the audio intro duration
+        if self.tab_start_bar > 0:
+            # Calculate stretched tempo for intro bars
+            # Expected intro at tab tempo vs actual audio intro
+            expected_intro_duration = self.tab_start_bar * self.expected_bar_duration
+            # Stretched tempo = original_tempo * (expected / actual)
+            intro_tempo = self.original_tempo * (expected_intro_duration / self.first_beat_time)
+
+            intro_sync_point = SyncPointData(
+                bar=0,
+                frame_offset=0,  # Intro starts at beginning of audio
+                modified_tempo=intro_tempo,
+                original_tempo=self.original_tempo,
+            )
+            sync_points.append(intro_sync_point)
+
+            logger.info(
+                f"Intro sync point: bar=0, tempo={intro_tempo:.3f} BPM "
+                f"(stretches {self.tab_start_bar} bars over {self.first_beat_time:.3f}s)"
+            )
 
         for bar in positions:
             local_tempo = self.calculate_local_tempo_at_bar(bar)
