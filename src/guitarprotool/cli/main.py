@@ -530,13 +530,10 @@ def run_pipeline():
                     f"No tempo found in GP file, using detected BPM: {original_tempo:.1f}"
                 )
 
-            # Find first bar with actual notes (for tabs with intro rests)
-            first_bar_with_notes = modifier.get_first_bar_with_notes()
-            if first_bar_with_notes > 0:
-                console.print(
-                    f"[cyan]Note:[/cyan] Tab has {first_bar_with_notes} intro bar(s) "
-                    f"before notes start. Audio will align with bar {first_bar_with_notes}."
-                )
+            # Note: We previously tried auto-detecting first bar with notes, but this
+            # doesn't work well for multi-instrument songs where the tab's instrument
+            # (e.g., bass) may not start at the same time as other instruments in the
+            # audio. The user should manually adjust alignment in Guitar Pro if needed.
 
             # Correct for double/half-time detection
             original_detected_bpm = beat_info.bpm
@@ -606,19 +603,6 @@ def run_pipeline():
                     adaptive=True,  # Use adaptive tempo sync
                 )
 
-                # Adjust frame_padding to account for intro bars
-                # The first detected beat should align with first_bar_with_notes, not bar 0
-                # frame_padding already shifts audio left by first_beat_time
-                # We need to shift it right by the duration of intro bars
-                if first_bar_with_notes > 0:
-                    beats_per_bar = 4
-                    seconds_per_bar = 60.0 / original_tempo * beats_per_bar
-                    intro_duration = first_bar_with_notes * seconds_per_bar
-                    intro_frames = int(intro_duration * 44100)  # sample rate
-                    adjusted_frame_padding = sync_result.frame_padding + intro_frames
-                else:
-                    adjusted_frame_padding = sync_result.frame_padding
-
                 # Convert to XML modifier format
                 sync_points = [
                     SyncPoint(
@@ -680,12 +664,12 @@ def run_pipeline():
                 )
 
                 # Create backing track config with frame_padding for audio alignment
-                # frame_padding is adjusted to align first beat with first_bar_with_notes
+                # frame_padding shifts audio so first detected beat aligns with bar 0
                 track_config = BackingTrackConfig(
                     name=track_name,
                     short_name=track_name[:8] if len(track_name) > 8 else track_name,
                     asset_id=0,
-                    frame_padding=adjusted_frame_padding,
+                    frame_padding=sync_result.frame_padding,
                 )
 
                 # Inject elements
