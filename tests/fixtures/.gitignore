@@ -1,0 +1,13 @@
+# Ignore actual test files (copyrighted music, binary files)
+*.gp
+*.gpx
+*.gp5
+*.gp4
+*.gp3
+*.mp3
+*.wav
+youtube_url.txt
+
+# Only track documentation
+!README.md
+!*/notes.md
