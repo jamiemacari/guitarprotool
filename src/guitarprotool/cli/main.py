@@ -230,14 +230,36 @@ def run_test_mode() -> int:
     Returns:
         Exit code (0 = all passed, 1 = some failed)
     """
+    import tempfile
+
     console.print()
     console.print(Panel("[bold]Test Mode[/bold]\nRunning all configured test cases...", border_style="cyan"))
     console.print()
+
+    # Create output directory with timestamp (do this early so logs are always saved)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path(tempfile.gettempdir()) / "guitarprotool_tests" / f"run_{timestamp}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"[dim]Output directory: {output_dir}[/dim]")
+    console.print()
+
+    def save_logs():
+        """Save session logs to output directory."""
+        txt_log = output_dir / "session_log.txt"
+        html_log = output_dir / "session_log.html"
+        console.save_text(str(txt_log))
+        console.save_html(str(html_log))
+        console.print()
+        console.print(f"[dim]Session logs saved to:[/dim]")
+        console.print(f"[dim]  {txt_log}[/dim]")
+        console.print(f"[dim]  {html_log}[/dim]")
 
     try:
         fixtures_dir = get_test_fixtures_dir()
     except FileNotFoundError as e:
         console.print(f"[red]Error:[/red] {e}")
+        save_logs()
         return 1
 
     # Find all test case directories
@@ -285,6 +307,7 @@ def run_test_mode() -> int:
         console.print("  tests/fixtures/<song_name>/input.gp")
         console.print("  tests/fixtures/<song_name>/youtube_url.txt")
         console.print("  tests/fixtures/<song_name>/reference.gp (optional)")
+        save_logs()
         return 1
 
     console.print(f"Found [cyan]{len(test_cases)}[/cyan] test case(s):")
@@ -301,10 +324,6 @@ def run_test_mode() -> int:
         console.print(f"[bold]{'='*60}[/bold]")
         console.print()
 
-        # Create output path in temp directory
-        import tempfile
-        output_dir = Path(tempfile.gettempdir()) / "guitarprotool_tests"
-        output_dir.mkdir(exist_ok=True)
         output_path = output_dir / f"{tc['name']}_output.gp"
 
         # Create args namespace
@@ -352,6 +371,9 @@ def run_test_mode() -> int:
 
     console.print()
     console.print("[dim]Open output files in Guitar Pro to verify audio sync.[/dim]")
+
+    # Always save session log for troubleshooting
+    save_logs()
 
     return 0 if failed == 0 else 1
 
