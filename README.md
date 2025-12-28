@@ -120,6 +120,14 @@ The tool creates a new file: `[original]_with_audio.gp` containing:
 5. **Inject**: Modifies score.gpif XML to add AudioTrack element
 6. **Repackage**: Creates new .gp file with audio and sync points
 
+### Capturing Full Output
+
+To capture all terminal output (including progress bars) to a file:
+
+```bash
+guitarprotool --test-mode 2>&1 | tee full_output.txt
+```
+
 ## Tech Stack
 
 - **yt-dlp**: YouTube audio download
