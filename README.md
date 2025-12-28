@@ -21,6 +21,7 @@ Automate the workflow of downloading YouTube audio, injecting it into Guitar Pro
 - Convert audio to MP3 192kbps for Guitar Pro compatibility
 - Automatic BPM and beat detection using librosa
 - Adaptive tempo sync for accurate playback alignment
+- **AI-powered bass isolation** (optional): Better sync for songs with ambient intros
 - Interactive CLI interface with beautiful terminal UI
 - Extract, modify, and repackage Guitar Pro files safely
 
@@ -62,6 +63,21 @@ pip install -r requirements.txt
 # Or install in development mode
 pip install -e .
 ```
+
+### Optional: Bass Isolation
+
+For songs with ambient intros or complex arrangements, bass isolation uses AI to detect where the bass actually starts, improving sync accuracy:
+
+```bash
+pip install guitarprotool[bass-isolation]
+```
+
+This installs PyTorch and Demucs (~2GB). Requires:
+- ~4GB disk space
+- GPU recommended (CUDA) but works on CPU
+- First run downloads the model (~1.5GB)
+
+When installed, bass isolation runs automatically during audio processing.
 
 ## Usage
 
@@ -110,6 +126,7 @@ The tool creates a new file: `[original]_with_audio.gp` containing:
 - **rich**: Beautiful terminal UI
 - **questionary**: Interactive prompts
 - **loguru**: Logging
+- **Demucs** (optional): AI-powered bass isolation for improved sync
 
 ## Development
 
