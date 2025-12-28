@@ -4,11 +4,13 @@ This directory contains test fixtures for validating the audio injection pipelin
 
 ## Quick Start
 
-Once you've added your test files, run all tests with a single command:
+Run all tests with a single command:
 
 ```bash
 guitarprotool --test-mode
 ```
+
+The test fixtures are included in the repository, so tests run immediately after checkout.
 
 ## Structure
 
@@ -18,49 +20,16 @@ Each song has its own directory with:
 - `youtube_url.txt` - YouTube URL used for audio (one URL per line)
 - `notes.md` - Description of test case and expected behavior
 
-## Setup Instructions
+## Included Test Cases
 
-### 1. Copy Test Files
-
-Copy your GP files into the appropriate directories:
-
-```bash
-# Simple song (Nirvana - In Bloom)
-cp /path/to/in_bloom.gp tests/fixtures/simple_song/input.gp
-cp /path/to/in_bloom_synced.gp tests/fixtures/simple_song/reference.gp
-
-# Complex intro (Air - La Femme d'Argent)
-cp /path/to/la_femme.gpx tests/fixtures/complex_intro/input.gp
-cp /path/to/la_femme_synced.gp tests/fixtures/complex_intro/reference.gp
-```
-
-### 2. Add YouTube URLs
-
-```bash
-echo "https://youtube.com/watch?v=YOUR_URL_HERE" > tests/fixtures/simple_song/youtube_url.txt
-echo "https://youtube.com/watch?v=YOUR_URL_HERE" > tests/fixtures/complex_intro/youtube_url.txt
-```
-
-### 3. Run Tests
-
-```bash
-guitarprotool --test-mode
-```
-
-Output files are saved to a temp directory (shown in the output).
-
-## Test Case Categories
-
-### Simple Songs (music starts on first beat)
-- No intro bars before bass enters
+### simple_song (Nirvana - In Bloom)
+- Music starts on first beat (no intro)
 - Expected: high accuracy out of the box
-- Example: Nirvana - In Bloom
 
-### Complex Intros (ambient/silent intro)
-- Bars of silence or ambient audio before bass
+### complex_intro (Air - La Femme d'Argent)
+- Ambient intro before bass enters
 - Tests bass isolation and intro alignment
-- Reference may have fewer sync points (user only added where needed)
-- Example: Air - La Femme d'Argent
+- Reference has manually adjusted sync points
 
 ## Adding New Test Cases
 
@@ -73,12 +42,4 @@ Output files are saved to a temp directory (shown in the output).
    - Save as `reference.gp`
 4. Save YouTube URL in `youtube_url.txt`
 5. Document test case in `notes.md`
-
-## Git Ignored Files
-
-The actual GP files (.gp, .gpx) and YouTube URLs are git-ignored to avoid:
-- Copyright issues with copyrighted music files
-- Repository bloat from binary files
-- Sensitive URL exposure
-
-Only the README.md and notes.md files are tracked in git.
+6. Commit all files to git

@@ -1,13 +1,6 @@
-# Ignore actual test files (copyrighted music, binary files)
-*.gp
-*.gpx
-*.gp5
-*.gp4
-*.gp3
+# Ignore temporary/generated files
 *.mp3
 *.wav
-youtube_url.txt
+.DS_Store
 
-# Only track documentation
-!README.md
-!*/notes.md
+# Track all test fixture files including GP files and URLs

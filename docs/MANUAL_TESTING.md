@@ -37,59 +37,34 @@ guitarprotool -i song.gp -y "https://youtube.com/watch?v=..." -o output.gp
 guitarprotool -i song.gp -y "URL" -o output.gp --compare reference.gp
 ```
 
-## Setting Up Test Fixtures
+## Test Fixtures
 
-### 1. Create the Fixture Structure
+Test fixtures are included in the repository. After checkout, `--test-mode` works immediately.
 
-The test fixtures directory structure should already exist:
+### Included Test Cases
+
+- **simple_song** (Nirvana - In Bloom): Music starts on first beat
+- **complex_intro** (Air - La Femme d'Argent): Ambient intro before bass
+
+### Adding New Test Cases
+
+To add a new test case, create a directory with this structure:
 
 ```
-tests/fixtures/
-├── simple_song/
-│   ├── input.gp          # Your original GP file
-│   ├── reference.gp      # Manually synced reference
-│   ├── youtube_url.txt   # YouTube URL
-│   └── notes.md          # Test case documentation
-└── complex_intro/
-    ├── input.gp (or .gpx)
-    ├── reference.gp
-    ├── youtube_url.txt
-    └── notes.md
+tests/fixtures/<song_name>/
+├── input.gp          # Original GP file without audio
+├── reference.gp      # Manually synced reference
+├── youtube_url.txt   # YouTube URL
+└── notes.md          # Test case documentation
 ```
 
-### 2. Copy Your Files
+### Creating Reference Files
 
-```bash
-# Simple song (e.g., Nirvana - In Bloom)
-cp /path/to/in_bloom.gp tests/fixtures/simple_song/input.gp
-
-# Complex intro (e.g., Air - La Femme d'Argent)
-cp /path/to/la_femme.gpx tests/fixtures/complex_intro/input.gpx
-```
-
-### 3. Add YouTube URLs
-
-```bash
-echo "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" > tests/fixtures/simple_song/youtube_url.txt
-echo "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" > tests/fixtures/complex_intro/youtube_url.txt
-```
-
-### 4. Create Reference Files
-
-1. Run the tool on your input file:
-   ```bash
-   guitarprotool -i tests/fixtures/simple_song/input.gp \
-     -y "$(cat tests/fixtures/simple_song/youtube_url.txt)" \
-     -o /tmp/initial.gp
-   ```
-
-2. Open `/tmp/initial.gp` in Guitar Pro 8
-
-3. Play the audio along with the tab
-
-4. Manually adjust sync points where audio drifts from tab
-
-5. Save as `tests/fixtures/simple_song/reference.gp`
+1. Run the tool: `guitarprotool -i input.gp -y "URL" -o temp.gp`
+2. Open `temp.gp` in Guitar Pro 8
+3. Play and manually adjust sync points where audio drifts
+4. Save as `reference.gp`
+5. Commit all files to git
 
 ## Interpreting Comparison Results
 

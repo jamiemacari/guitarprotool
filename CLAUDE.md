@@ -519,7 +519,7 @@ tests/fixtures/
 └── README.md
 ```
 
-**Note:** GP files and youtube_url.txt are git-ignored to avoid copyright issues.
+**Note:** Test fixtures (GP files and youtube_url.txt) are tracked in git for immediate test availability after checkout.
 
 ### SyncComparator Module
 
