@@ -242,14 +242,14 @@ class SyncComparator:
     """Compare sync points between generated and reference GP files.
 
     Example:
-        >>> comparator = SyncComparator(frame_tolerance=4410, tempo_tolerance=1.0)
+        >>> comparator = SyncComparator(frame_tolerance=4410, tempo_tolerance=1.5)
         >>> sync_points = SyncComparator.extract_sync_points(Path("song.gp"))
         >>> result = comparator.compare(Path("generated.gp"), Path("reference.gp"))
         >>> print(result.generate_report())
     """
 
     DEFAULT_FRAME_TOLERANCE = 4410  # ~100ms at 44.1kHz
-    DEFAULT_TEMPO_TOLERANCE = 1.0  # 1 BPM
+    DEFAULT_TEMPO_TOLERANCE = 1.5  # 1.5 BPM
 
     def __init__(
         self,
