@@ -531,3 +531,168 @@ When encountering new XML parse errors from GPX files:
 ### Test Files
 - `tests/test_bcfz.py` - 20 tests for BCFZ decompression
 - `tests/test_format_handler.py` - 27 tests for format handling
+
+## Bass Transcription Feature - PLANNED
+
+**Status:** Research Complete, Ready for Phase 1 Implementation
+**Documentation:** See [`docs/TRANSCRIPTION_ROADMAP.md`](docs/TRANSCRIPTION_ROADMAP.md) for comprehensive plan
+**Target Accuracy:** 80%+ on simple root-note bass lines
+**Timeline:** 4 months to fully integrated feature
+
+### Overview
+
+Next major feature: Automated bass tab transcription using Music Information Retrieval (MIR) libraries. This will move beyond beat detection to full rhythm recognition and automated tab writing with proper music notation.
+
+### Current Capabilities (Audio Analysis Only)
+- ✅ Beat detection using librosa (BPM and beat positions)
+- ✅ Bass isolation using Demucs v4 (isolates bass from full mix)
+- ✅ Adaptive tempo sync (handles tempo drift)
+
+### Planned Capabilities (Transcription)
+- 🔲 Rhythm pattern recognition (syncopation, subdivisions)
+- 🔲 Pitch detection (identify which notes are played)
+- 🔲 Note duration detection (quarter notes, eighths, sixteenths)
+- 🔲 MIDI generation from audio
+- 🔲 Guitar Pro XML tab injection (auto-generated bass tabs)
+
+### Key Technologies (Research Complete)
+
+**madmom** - Advanced onset/beat detection
+- 10-15% accuracy improvement over current librosa approach
+- Beat, downbeat, and meter tracking
+- **Phase 1 Priority**: Replace `librosa.onset.onset_detect()` with `madmom`
+
+**CREPE** - Monophonic pitch detection
+- 95-98% accuracy on clean monophonic bass recordings
+- 10ms temporal resolution for precise note tracking
+- **Phase 2 Priority**: New `PitchDetector` class using CREPE
+
+**music21** - Rhythm quantization
+- Converts messy onset times → standard notation (quarter, eighth, sixteenth)
+- MIDI/MusicXML import/export
+- **Phase 3 Priority**: New `RhythmQuantizer` class
+
+**mir_eval** - Accuracy evaluation
+- Objective metrics for onset detection, pitch accuracy, rhythm accuracy
+- Essential for validating transcription quality against ground truth tabs
+- **All Phases**: Used for measuring improvement
+
+### Implementation Strategy
+
+**Incremental improvements** starting with beat detection enhancement:
+1. **Phase 1** (Week 1): Add madmom for better onset detection
+2. **Phase 2** (Week 2-3): Add CREPE for pitch detection
+3. **Phase 3** (Month 2): Add music21 for rhythm quantization
+4. **Phase 4** (Month 2-3): Combine pitch + rhythm → MIDI generation
+5. **Phase 5** (Month 3-4): Inject auto-generated tabs into GP8 XML
+6. **Phase 6** (Month 4): CLI integration and user testing
+
+**Focus**: Simple root-note bass lines initially (maximize accuracy potential)
+
+### New Optional Dependencies (When Implemented)
+
+```toml
+# In pyproject.toml
+[project.optional-dependencies]
+transcription = [
+    "madmom>=0.16.1",        # Better onset/beat detection
+    "crepe>=0.0.12",         # Pitch detection
+    "music21>=9.0.0",        # Rhythm quantization
+    "mir_eval>=0.7",         # Evaluation metrics
+    "mido>=1.3.0",           # MIDI file handling
+]
+```
+
+**Install**: `pip install guitarprotool[transcription]`
+**Size**: ~500MB total (music21 is large)
+
+### New Modules (When Implemented)
+
+**`core/pitch_detector.py`** (Phase 2)
+- `PitchDetector` class using CREPE
+- Methods: `analyze(audio_path)`, `get_midi_notes(min_confidence=0.8)`
+- Dataclass: `PitchInfo(times, frequencies, confidences, midi_notes)`
+
+**`core/rhythm_quantizer.py`** (Phase 3)
+- `RhythmQuantizer` class using music21
+- Methods: `quantize(onset_times, bpm, time_signature)`, `get_durations()`
+- Dataclass: `QuantizedRhythm(onset_times, durations, subdivisions)`
+
+**`core/transcription_engine.py`** (Phase 4)
+- `TranscriptionEngine` class
+- Methods: `generate_midi(pitch_info, rhythm_info)`, `validate_bass_range()`
+- Dataclass: `Transcription(notes, durations, pitches, midi_file_path)`
+
+### Modified Files (When Implemented)
+
+**`core/beat_detector.py`** (Phase 1)
+- Enhanced with `madmom.features.onsets.OnsetDetector`
+- Keep librosa as fallback (optional dependency pattern)
+- Add parameter: `detector='madmom'` or `detector='librosa'`
+
+**`core/xml_modifier.py`** (Phase 5)
+- Add method: `inject_bass_tab(transcription, track_index)`
+- Generate XML for each note (pitch, duration, fret position)
+- Handle rhythm notation (quarter, eighth, sixteenth flags)
+
+**`cli/main.py`** (Phase 6)
+- Add menu option: "Transcribe bass tab from audio"
+- Workflow: Audio source → Isolation → Transcription → MIDI/GP output
+- Display accuracy metrics if ground truth provided
+
+### Expected Accuracy
+
+**Clean Studio Recordings**:
+- Pitch detection: 95-98% (CREPE on isolated bass)
+- Onset detection: 90-95% (madmom)
+- Rhythm quantization: 70-85% (simple patterns)
+- **Overall**: 65-80% fully correct notes (pitch + rhythm)
+
+**Live/Noisy Recordings**:
+- Pitch detection: 75-85% (background noise, effects)
+- Onset detection: 80-90% (less clear attacks)
+- Rhythm quantization: 60-75% (tempo drift, rubato)
+- **Overall**: 50-65% fully correct notes
+
+**User Requirement**: 80%+ accuracy on simple root-note bass lines
+
+### Validation Strategy
+
+- **Ground truth test suite**: User has existing GP bass tabs for validation
+- **mir_eval metrics**: Objective measurement of transcription accuracy
+- **Iterative refinement**: Measure baseline → identify failure modes → tune algorithms
+- **Success criteria**: < 5 minutes manual correction per song
+
+### Key Technical Challenges
+
+- Bass-specific: Low frequencies harder to detect, string noise, effects processing
+- Rhythm complexity: Syncopation, triplets, ghost notes
+- Notation ambiguity: Same pitch, multiple fret positions on bass
+- Live recordings: Tempo drift (already handled!), bleed from other instruments
+
+### Risk Mitigation
+
+- Focus on simple root notes (clear onsets, sustained durations)
+- Confidence-based filtering (flag uncertain notes for manual review)
+- Multiple algorithm options (test both, use best for each song type)
+- User feedback loop (test on real songs, adjust based on failures)
+
+**Contingency**: If 80% proves unattainable, identify achievable accuracy and discuss whether useful enough
+
+### Competitive Advantage
+
+- **Bass-specific optimization** (Demucs isolation + CREPE)
+- **Guitar Pro native integration** (inject directly into .gp files)
+- **Free and open source**
+- **Tailored workflow** (YouTube → Bass tab in one command)
+
+### Next Immediate Steps (Before Phase 1)
+
+1. Prepare 5 simple root-note bass GP files (ground truth)
+2. Install `[transcription]` optional dependencies
+3. Measure baseline: Current librosa beat detection accuracy
+4. **Go/No-Go Decision**: If madmom improves onset detection by ≥10%, proceed to Phase 2
+
+---
+
+For detailed implementation plan, MIR tool comparisons, accuracy targets, and technical specifications, see **[`docs/TRANSCRIPTION_ROADMAP.md`](docs/TRANSCRIPTION_ROADMAP.md)**.
