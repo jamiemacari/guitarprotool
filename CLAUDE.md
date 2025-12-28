@@ -470,6 +470,92 @@ console.save_text(str(txt_path))
 console.save_html(str(html_path))
 ```
 
+## Manual Testing Infrastructure - IMPLEMENTED
+
+**Status:** ✅ Implemented
+**Branch:** `feature/manual-testing-automation`
+
+### Test Mode CLI
+
+Run all configured test cases with a single command:
+```bash
+guitarprotool --test-mode
+```
+
+This automatically:
+1. Finds all test cases in `tests/fixtures/`
+2. Runs the pipeline on each one
+3. Compares output to reference files (if available)
+4. Shows a summary of results
+5. Saves output files and session logs for manual verification
+
+### CLI Arguments (Non-Interactive Mode)
+
+```bash
+# Single file with YouTube URL
+guitarprotool -i song.gp -y "https://youtube.com/watch?v=..." -o output.gp
+
+# With comparison to reference file
+guitarprotool -i song.gp -y "URL" -o output.gp --compare reference.gp
+
+# With local audio file
+guitarprotool -i song.gp --local-audio backing.mp3 -o output.gp
+```
+
+### Test Fixtures Directory Structure
+
+```
+tests/fixtures/
+├── simple_song/           # Songs where music starts on first beat
+│   ├── input.gp          # Original GP file without audio
+│   ├── reference.gp      # Manually synced reference (created in GP8)
+│   ├── youtube_url.txt   # YouTube URL for audio
+│   └── notes.md          # Test case documentation
+├── complex_intro/         # Songs with ambient/silent intro before bass
+│   ├── input.gp
+│   ├── reference.gp
+│   ├── youtube_url.txt
+│   └── notes.md
+└── README.md
+```
+
+**Note:** GP files and youtube_url.txt are git-ignored to avoid copyright issues.
+
+### SyncComparator Module
+
+**Location:** `src/guitarprotool/core/sync_comparator.py`
+**Tests:** `tests/test_sync_comparison.py`
+
+Compares sync points between generated and reference GP files:
+- `SyncComparator.extract_sync_points(gp_path)` - Extract sync points from GP file
+- `SyncComparator.compare(generated, reference)` - Compare with tolerance
+- `ComparisonResult.generate_report()` - Human-readable comparison report
+
+**Default tolerances:**
+- Frame offset: 4410 samples (~100ms)
+- Tempo: 1.0 BPM
+
+### Session Logging
+
+Test mode saves session logs even on failure:
+- Creates output directory early in `run_test_mode()`
+- Saves `session_log.txt` and `session_log.html` via Rich console capture
+- Logs saved to `/tmp/guitarprotool_tests/run_YYYYMMDD_HHMMSS/`
+
+**Limitation:** tqdm progress bars (from Demucs/PyTorch) and loguru debug messages are not captured in session logs as they bypass Rich's console. Use `2>&1 | tee output.txt` to capture everything.
+
+### Manual Testing Fixtures in conftest.py
+
+```python
+@pytest.fixture
+def simple_song_fixture(fixtures_dir) -> dict:
+    """Returns dict with input, reference, youtube_url, name keys."""
+
+@pytest.fixture
+def complex_intro_fixture(fixtures_dir) -> dict:
+    """Same structure, for songs with ambient intros."""
+```
+
 ## GPX Format Support - IMPLEMENTED
 
 **Status:** ✅ Implemented
