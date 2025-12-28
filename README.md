@@ -69,7 +69,10 @@ pip install -e .
 For songs with ambient intros or complex arrangements, bass isolation uses AI to detect where the bass actually starts, improving sync accuracy:
 
 ```bash
-pip install guitarprotool[bass-isolation]
+pip install "guitarprotool[bass-isolation]"
+
+# Or for local development:
+pip install -e ".[bass-isolation]"
 ```
 
 This installs PyTorch and Demucs (~2GB). Requires:
