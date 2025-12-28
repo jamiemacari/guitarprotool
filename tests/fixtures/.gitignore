@@ -1,0 +1,6 @@
+# Ignore temporary/generated files
+*.mp3
+*.wav
+.DS_Store
+
+# Track all test fixture files including GP files and URLs

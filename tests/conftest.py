@@ -115,3 +115,73 @@ def sample_gp_file_content_gpif(temp_dir):
         zf.writestr("VERSION", "8.0")
 
     return gp_path
+
+
+# =============================================================================
+# Manual Testing Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def fixtures_dir() -> Path:
+    """Return path to test fixtures directory."""
+    return Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture
+def simple_song_fixture(fixtures_dir) -> dict:
+    """Load simple song test fixture (e.g., Nirvana - In Bloom).
+
+    Returns:
+        Dict with input, reference, youtube_url, and name keys.
+        Skips test if fixture files are not available.
+    """
+    song_dir = fixtures_dir / "simple_song"
+    input_file = song_dir / "input.gp"
+    reference_file = song_dir / "reference.gp"
+    url_file = song_dir / "youtube_url.txt"
+
+    if not input_file.exists():
+        pytest.skip("simple_song/input.gp fixture not available")
+
+    youtube_url = None
+    if url_file.exists():
+        youtube_url = url_file.read_text().strip()
+
+    return {
+        "input": input_file,
+        "reference": reference_file if reference_file.exists() else None,
+        "youtube_url": youtube_url,
+        "name": "simple_song",
+    }
+
+
+@pytest.fixture
+def complex_intro_fixture(fixtures_dir) -> dict:
+    """Load complex intro test fixture (e.g., Air - La Femme d'Argent).
+
+    Returns:
+        Dict with input, reference, youtube_url, and name keys.
+        Skips test if fixture files are not available.
+    """
+    song_dir = fixtures_dir / "complex_intro"
+    input_file = song_dir / "input.gp"
+    # May also be .gpx format
+    if not input_file.exists():
+        input_file = song_dir / "input.gpx"
+    reference_file = song_dir / "reference.gp"
+    url_file = song_dir / "youtube_url.txt"
+
+    if not input_file.exists():
+        pytest.skip("complex_intro/input.gp(x) fixture not available")
+
+    youtube_url = None
+    if url_file.exists():
+        youtube_url = url_file.read_text().strip()
+
+    return {
+        "input": input_file,
+        "reference": reference_file if reference_file.exists() else None,
+        "youtube_url": youtube_url,
+        "name": "complex_intro",
+    }

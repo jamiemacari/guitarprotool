@@ -53,11 +53,15 @@ logs/
 temp/
 tmp/
 
-# Guitar Pro files (for testing)
+# Guitar Pro files (generated during testing)
 *.gp
 *.gpx
 *.gp5
 *.gp4
+# But allow test fixtures
+!tests/fixtures/**/*.gp
+!tests/fixtures/**/*.gpx
+!tests/fixtures/**/youtube_url.txt
 
 # Audio files
 *.mp3

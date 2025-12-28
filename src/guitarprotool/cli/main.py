@@ -5,8 +5,11 @@ Provides an interactive command-line interface for:
 - Downloading/converting audio from YouTube or local files
 - Detecting BPM and beat positions
 - Injecting audio with sync points into GP files
+
+Also supports non-interactive mode via command-line arguments.
 """
 
+import argparse
 import shutil
 import sys
 from datetime import datetime
@@ -43,6 +46,7 @@ from guitarprotool.utils.exceptions import (
     BeatDetectionError,
     FormatConversionError,
 )
+from guitarprotool.core.sync_comparator import SyncComparator
 
 # Try to import AudioProcessor - may fail on Python 3.14 due to pydub/audioop issue
 try:
@@ -96,6 +100,282 @@ Inject YouTube audio into Guitar Pro files with automatic sync points.
         supported=supported,
     )
     console.print(Panel(banner.strip(), border_style="cyan"))
+
+
+def parse_args() -> Optional[argparse.Namespace]:
+    """Parse command-line arguments for non-interactive mode.
+
+    Returns:
+        Namespace with arguments if any provided, None for interactive mode.
+    """
+    parser = argparse.ArgumentParser(
+        description="Guitar Pro Audio Injection Tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Interactive mode (default)
+  guitarprotool
+
+  # Run all test cases automatically
+  guitarprotool --test-mode
+
+  # Non-interactive with YouTube URL
+  guitarprotool -i song.gp -y "https://youtube.com/watch?v=..." -o output.gp
+
+  # Compare output to reference file
+  guitarprotool -i song.gp -y "URL" -o output.gp --compare reference.gp
+        """,
+    )
+    parser.add_argument(
+        "--test-mode",
+        action="store_true",
+        help="Run all configured test cases from tests/fixtures/",
+    )
+    parser.add_argument(
+        "-i", "--input", type=Path, metavar="FILE", help="Input GP file path"
+    )
+    parser.add_argument(
+        "-y", "--youtube-url", type=str, metavar="URL", help="YouTube URL for audio"
+    )
+    parser.add_argument(
+        "--local-audio", type=Path, metavar="FILE", help="Local audio file path"
+    )
+    parser.add_argument(
+        "-o", "--output", type=Path, metavar="FILE", help="Output GP file path"
+    )
+    parser.add_argument(
+        "-n",
+        "--track-name",
+        type=str,
+        default="Audio Track",
+        help="Track name in Guitar Pro (default: Audio Track)",
+    )
+    parser.add_argument(
+        "--compare",
+        type=Path,
+        metavar="FILE",
+        help="Compare output to reference file and print report",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Suppress non-essential output"
+    )
+
+    args = parser.parse_args()
+
+    # Test mode takes priority
+    if args.test_mode:
+        return args
+
+    # If no input provided, return None for interactive mode
+    if args.input is None:
+        return None
+
+    # Validate required arguments for non-interactive mode
+    if not (args.youtube_url or args.local_audio):
+        parser.error("Either --youtube-url or --local-audio is required with --input")
+
+    if args.youtube_url and args.local_audio:
+        parser.error("Cannot specify both --youtube-url and --local-audio")
+
+    # Validate input file exists
+    if not args.input.exists():
+        parser.error(f"Input file not found: {args.input}")
+
+    # Validate input format
+    if not is_supported_format(args.input):
+        parser.error(
+            f"Unsupported file format: {args.input.suffix}. "
+            f"Supported: {', '.join(get_supported_extensions())}"
+        )
+
+    # Validate local audio exists
+    if args.local_audio and not args.local_audio.exists():
+        parser.error(f"Audio file not found: {args.local_audio}")
+
+    # Default output path if not specified
+    if args.output is None:
+        args.output = args.input.parent / f"{args.input.stem}_with_audio.gp"
+
+    # Validate compare file exists
+    if args.compare and not args.compare.exists():
+        parser.error(f"Reference file not found: {args.compare}")
+
+    return args
+
+
+def get_test_fixtures_dir() -> Path:
+    """Get the path to the test fixtures directory."""
+    # Try relative to this file first (installed package)
+    cli_dir = Path(__file__).parent
+    project_root = cli_dir.parent.parent.parent
+    fixtures_dir = project_root / "tests" / "fixtures"
+
+    if fixtures_dir.exists():
+        return fixtures_dir
+
+    # Try current working directory
+    cwd_fixtures = Path.cwd() / "tests" / "fixtures"
+    if cwd_fixtures.exists():
+        return cwd_fixtures
+
+    raise FileNotFoundError(
+        "Test fixtures directory not found. "
+        "Run from project root or ensure tests/fixtures/ exists."
+    )
+
+
+def run_test_mode() -> int:
+    """Run all configured test cases from tests/fixtures/.
+
+    Returns:
+        Exit code (0 = all passed, 1 = some failed)
+    """
+    import tempfile
+
+    console.print()
+    console.print(Panel("[bold]Test Mode[/bold]\nRunning all configured test cases...", border_style="cyan"))
+    console.print()
+
+    # Create output directory with timestamp (do this early so logs are always saved)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path(tempfile.gettempdir()) / "guitarprotool_tests" / f"run_{timestamp}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"[dim]Output directory: {output_dir}[/dim]")
+    console.print()
+
+    def save_logs():
+        """Save session logs to output directory."""
+        txt_log = output_dir / "session_log.txt"
+        html_log = output_dir / "session_log.html"
+        console.save_text(str(txt_log))
+        console.save_html(str(html_log))
+        console.print()
+        console.print(f"[dim]Session logs saved to:[/dim]")
+        console.print(f"[dim]  {txt_log}[/dim]")
+        console.print(f"[dim]  {html_log}[/dim]")
+
+    try:
+        fixtures_dir = get_test_fixtures_dir()
+    except FileNotFoundError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        save_logs()
+        return 1
+
+    # Find all test case directories
+    test_cases = []
+    for case_dir in sorted(fixtures_dir.iterdir()):
+        if not case_dir.is_dir():
+            continue
+        if case_dir.name.startswith("."):
+            continue
+
+        # Look for input file
+        input_file = case_dir / "input.gp"
+        if not input_file.exists():
+            input_file = case_dir / "input.gpx"
+        if not input_file.exists():
+            continue
+
+        # Look for YouTube URL
+        url_file = case_dir / "youtube_url.txt"
+        if not url_file.exists():
+            console.print(f"[yellow]Skipping {case_dir.name}:[/yellow] No youtube_url.txt")
+            continue
+
+        youtube_url = url_file.read_text().strip()
+        if not youtube_url:
+            console.print(f"[yellow]Skipping {case_dir.name}:[/yellow] Empty youtube_url.txt")
+            continue
+
+        # Reference file (optional)
+        reference_file = case_dir / "reference.gp"
+        if not reference_file.exists():
+            reference_file = None
+
+        test_cases.append({
+            "name": case_dir.name,
+            "input": input_file,
+            "youtube_url": youtube_url,
+            "reference": reference_file,
+        })
+
+    if not test_cases:
+        console.print("[yellow]No test cases found.[/yellow]")
+        console.print()
+        console.print("To set up test cases, add files to tests/fixtures/:")
+        console.print("  tests/fixtures/<song_name>/input.gp")
+        console.print("  tests/fixtures/<song_name>/youtube_url.txt")
+        console.print("  tests/fixtures/<song_name>/reference.gp (optional)")
+        save_logs()
+        return 1
+
+    console.print(f"Found [cyan]{len(test_cases)}[/cyan] test case(s):")
+    for tc in test_cases:
+        ref_status = "[green]+ reference[/green]" if tc["reference"] else "[dim]no reference[/dim]"
+        console.print(f"  - {tc['name']} {ref_status}")
+    console.print()
+
+    # Run each test case
+    results = []
+    for tc in test_cases:
+        console.print(f"[bold]{'='*60}[/bold]")
+        console.print(f"[bold]Test: {tc['name']}[/bold]")
+        console.print(f"[bold]{'='*60}[/bold]")
+        console.print()
+
+        output_path = output_dir / f"{tc['name']}_output.gp"
+
+        # Create args namespace
+        args = argparse.Namespace(
+            input=tc["input"],
+            youtube_url=tc["youtube_url"],
+            local_audio=None,
+            output=output_path,
+            track_name="Audio Track",
+            compare=tc["reference"],
+            quiet=False,
+            test_mode=True,
+        )
+
+        # Run pipeline
+        exit_code = run_pipeline_noninteractive(args)
+
+        results.append({
+            "name": tc["name"],
+            "passed": exit_code == 0,
+            "output": output_path,
+        })
+
+        console.print()
+
+    # Summary
+    console.print(f"[bold]{'='*60}[/bold]")
+    console.print("[bold]TEST SUMMARY[/bold]")
+    console.print(f"[bold]{'='*60}[/bold]")
+    console.print()
+
+    passed = sum(1 for r in results if r["passed"])
+    failed = len(results) - passed
+
+    for r in results:
+        status = "[green]PASS[/green]" if r["passed"] else "[red]FAIL[/red]"
+        console.print(f"  {status} {r['name']}")
+        console.print(f"       Output: {r['output']}")
+
+    console.print()
+    if failed == 0:
+        console.print(f"[bold green]All {passed} test(s) passed![/bold green]")
+    else:
+        console.print(f"[bold yellow]{passed} passed, {failed} failed[/bold yellow]")
+
+    console.print()
+    console.print("[dim]Open output files in Guitar Pro to verify audio sync.[/dim]")
+
+    # Always save session log for troubleshooting
+    save_logs()
+
+    return 0 if failed == 0 else 1
 
 
 def get_gp_file_path() -> Optional[Path]:
@@ -926,6 +1206,335 @@ def detect_bpm_only():
         display_beat_info(beat_info)
 
 
+def run_pipeline_noninteractive(args: argparse.Namespace) -> int:
+    """Execute the audio injection pipeline with CLI arguments (non-interactive).
+
+    Args:
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 = success, 1 = error)
+    """
+    gp_path = args.input.expanduser().resolve()
+    output_path = args.output.expanduser().resolve()
+    track_name = args.track_name
+
+    # Determine audio source
+    if args.youtube_url:
+        source_type = "youtube"
+        source_value = args.youtube_url
+    else:
+        source_type = "local"
+        source_value = str(args.local_audio.expanduser().resolve())
+
+    if not args.quiet:
+        console.print(f"[dim]Input:[/dim] {gp_path}")
+        console.print(f"[dim]Audio:[/dim] {source_value[:80]}{'...' if len(source_value) > 80 else ''}")
+        console.print(f"[dim]Output:[/dim] {output_path}")
+        console.print()
+
+    handler = None
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress:
+
+            # Initialize file handler and prepare for audio injection
+            handler = GPFileHandler(gp_path)
+            original_format = handler.format
+
+            if original_format != GPFormat.GP8:
+                extract_task = progress.add_task(
+                    f"[cyan]Converting {original_format.name} to GP8...", total=None
+                )
+            else:
+                extract_task = progress.add_task("[cyan]Extracting GP file...", total=None)
+
+            temp_dir = handler.prepare_for_audio_injection()
+
+            if original_format != GPFormat.GP8:
+                progress.update(
+                    extract_task,
+                    completed=100,
+                    total=100,
+                    description=f"[green]Converted from {original_format.name} to GP8",
+                )
+            else:
+                progress.update(
+                    extract_task, completed=100, total=100, description="[green]GP file extracted"
+                )
+
+            # Process audio
+            audio_dir = handler.get_audio_dir()
+            audio_info = process_audio(source_type, source_value, audio_dir, progress)
+            if not audio_info:
+                raise AudioProcessingError("Failed to process audio")
+
+            # Bass isolation for finding bass start time
+            bass_isolated = False
+            bass_first_beat_time = None
+
+            if BASS_ISOLATION_AVAILABLE:
+                isolated_bass_path = isolate_bass(
+                    audio_info.file_path,
+                    audio_dir,
+                    progress,
+                )
+                if isolated_bass_path:
+                    bass_isolated = True
+                    bass_beat_info = detect_beats(isolated_bass_path, progress)
+                    if bass_beat_info and bass_beat_info.beat_times:
+                        bass_first_beat_time = bass_beat_info.beat_times[0]
+                        logger.info(f"Bass start detected at: {bass_first_beat_time:.3f}s")
+
+            # Detect beats on original audio
+            beat_info = detect_beats(audio_info.file_path, progress)
+            if not beat_info:
+                raise BeatDetectionError("Failed to detect beats")
+
+            # Get original tempo from GP file
+            gpif_path = handler.get_gpif_path()
+            modifier = XMLModifier(gpif_path)
+            modifier.load()
+            original_tempo = modifier.get_original_tempo()
+
+            if original_tempo is None:
+                original_tempo = beat_info.bpm
+                logger.info(f"No tempo found in GP file, using detected BPM: {original_tempo:.1f}")
+
+            # Find where notes start in the tab
+            tab_start_bar = 0
+            if bass_isolated and bass_first_beat_time is not None:
+                tab_start_bar = modifier.get_first_note_bar()
+                if tab_start_bar > 0:
+                    min_diff = float('inf')
+                    bass_beat_index = 0
+                    for i, bt in enumerate(beat_info.beat_times):
+                        diff = abs(bt - bass_first_beat_time)
+                        if diff < min_diff:
+                            min_diff = diff
+                            bass_beat_index = i
+
+                    aligned_beat_times = [
+                        bt - beat_info.beat_times[bass_beat_index] + bass_first_beat_time
+                        for bt in beat_info.beat_times[bass_beat_index:]
+                    ]
+                    beat_info = BeatInfo(
+                        bpm=beat_info.bpm,
+                        beat_times=aligned_beat_times,
+                        confidence=beat_info.confidence,
+                    )
+
+            # Correct for double/half-time detection
+            original_detected_bpm = beat_info.bpm
+            beat_info = BeatDetector.correct_tempo_multiple(beat_info, original_tempo)
+            tempo_corrected = beat_info.bpm != original_detected_bpm
+
+            # Display beat info (unless quiet)
+            progress.stop()
+            if not args.quiet:
+                console.print()
+                display_beat_info(beat_info)
+                if tempo_corrected:
+                    console.print(
+                        f"[yellow]Note:[/yellow] Tempo corrected from {original_detected_bpm:.1f} "
+                        f"to {beat_info.bpm:.1f} BPM (reference tempo: {original_tempo:.1f})"
+                    )
+                console.print()
+
+        # Continue with processing (new progress context)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress2:
+
+            # Analyze tempo drift
+            drift_task = progress2.add_task("[cyan]Analyzing tempo drift...", total=None)
+            bar_count = modifier.get_bar_count()
+            max_bars = bar_count if bar_count > 0 else None
+
+            try:
+                analyzer = DriftAnalyzer(
+                    beat_times=beat_info.beat_times,
+                    original_tempo=original_tempo,
+                    beats_per_bar=4,
+                    tab_start_bar=tab_start_bar,
+                )
+                drift_report = analyzer.analyze(max_bars=max_bars)
+                drift_report.tempo_corrected = tempo_corrected
+                drift_report.original_detected_bpm = original_detected_bpm
+                drift_report.corrected_bpm = beat_info.bpm
+                has_drift_report = True
+            except Exception as e:
+                logger.warning(f"Drift analysis failed: {e}")
+                drift_report = None
+                has_drift_report = False
+
+            progress2.update(
+                drift_task,
+                completed=100,
+                total=100,
+                description="[green]Drift analysis complete",
+            )
+
+            # Generate adaptive sync points
+            sync_task = progress2.add_task("[cyan]Generating sync points...", total=None)
+            detector = BeatDetector()
+            sync_result = detector.generate_sync_points(
+                beat_info,
+                original_tempo=original_tempo,
+                sync_interval=16,
+                max_bars=max_bars,
+                adaptive=True,
+                tab_start_bar=tab_start_bar,
+            )
+
+            sync_points = [
+                SyncPoint(
+                    bar=sp.bar,
+                    frame_offset=sp.frame_offset,
+                    modified_tempo=sp.modified_tempo,
+                    original_tempo=sp.original_tempo,
+                )
+                for sp in sync_result.sync_points
+            ]
+            progress2.update(
+                sync_task,
+                completed=100,
+                total=100,
+                description=f"[green]Generated {len(sync_points)} adaptive sync points",
+            )
+
+        # Create troubleshooting directory
+        troubleshoot_dir = get_troubleshooting_dir()
+
+        # Write drift report
+        if has_drift_report and drift_report:
+            drift_report.bars_with_sync_points = [sp.bar for sp in sync_result.sync_points]
+
+            if not args.quiet:
+                console.print()
+                display_drift_report(drift_report)
+
+            drift_report_path = troubleshoot_dir / "drift_report.txt"
+            drift_report.write_to_file(str(drift_report_path))
+
+            debug_beats_path = troubleshoot_dir / "debug_beats.txt"
+            analyzer.write_debug_beats(str(debug_beats_path))
+
+            if not args.quiet:
+                console.print(f"[dim]Drift report saved to: {drift_report_path}[/dim]")
+                console.print()
+
+        # XML injection and repackaging
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress3:
+
+            xml_task = progress3.add_task("[cyan]Modifying GP file...", total=None)
+
+            asset_info = AssetInfo(
+                asset_id=0,
+                uuid=audio_info.uuid,
+                original_file_path=str(audio_info.file_path),
+            )
+
+            track_config = BackingTrackConfig(
+                name=track_name,
+                short_name=track_name[:8] if len(track_name) > 8 else track_name,
+                asset_id=0,
+                frame_padding=sync_result.frame_padding,
+            )
+
+            modifier.inject_asset(asset_info)
+            modifier.inject_backing_track(track_config)
+            modifier.inject_sync_points(sync_points)
+            modifier.save()
+
+            target_audio_path = temp_dir / asset_info.embedded_file_path
+            target_audio_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(audio_info.file_path, target_audio_path)
+
+            progress3.update(
+                xml_task, completed=100, total=100, description="[green]GP file modified"
+            )
+
+            repack_task = progress3.add_task("[cyan]Repackaging...", total=None)
+            handler.save(output_path)
+            progress3.update(
+                repack_task, completed=100, total=100, description="[green]File saved"
+            )
+
+        # Save troubleshooting copies
+        save_troubleshooting_copies(
+            gp_path,
+            output_path,
+            audio_info.file_path,
+            troubleshoot_dir,
+        )
+        save_session_log(troubleshoot_dir)
+
+        # Success message
+        if not args.quiet:
+            console.print()
+            console.print(
+                Panel(
+                    f"[bold green]Success![/bold green]\n\n"
+                    f"Output: [cyan]{output_path}[/cyan]\n"
+                    f"BPM: {beat_info.bpm:.1f} | Sync points: {len(sync_points)}",
+                    title="Complete",
+                    border_style="green",
+                )
+            )
+
+        # Optional comparison
+        if args.compare:
+            console.print()
+            console.print("[bold]Comparing to reference file...[/bold]")
+            comparator = SyncComparator()
+            result = comparator.compare(output_path, args.compare)
+            console.print()
+            console.print(result.generate_report())
+
+            if not result.is_within_tolerance():
+                console.print()
+                console.print("[yellow]Warning:[/yellow] Some sync points outside tolerance")
+                return 1
+
+        return 0
+
+    except FormatConversionError as e:
+        console.print(f"\n[red]Format conversion error:[/red] {e}")
+        logger.exception("Format conversion failed")
+        return 1
+
+    except GuitarProToolError as e:
+        console.print(f"\n[red]Error:[/red] {e}")
+        logger.exception("Pipeline failed")
+        return 1
+
+    except Exception as e:
+        console.print(f"\n[red]Unexpected error:[/red] {e}")
+        logger.exception("Unexpected error in pipeline")
+        return 1
+
+    finally:
+        if handler:
+            handler.cleanup()
+
+
 def main():
     """Main entry point for CLI."""
     # Configure logging
@@ -937,8 +1546,23 @@ def main():
     )
 
     try:
-        print_banner()
-        main_menu()
+        # Check for CLI arguments
+        args = parse_args()
+
+        if args is not None:
+            print_banner()
+
+            if args.test_mode:
+                # Test mode - run all configured test cases
+                sys.exit(run_test_mode())
+            else:
+                # Non-interactive mode with specific arguments
+                sys.exit(run_pipeline_noninteractive(args))
+        else:
+            # Interactive mode
+            print_banner()
+            main_menu()
+
     except KeyboardInterrupt:
         console.print("\n[dim]Interrupted.[/dim]")
         sys.exit(1)

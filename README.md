@@ -21,6 +21,7 @@ Automate the workflow of downloading YouTube audio, injecting it into Guitar Pro
 - Convert audio to MP3 192kbps for Guitar Pro compatibility
 - Automatic BPM and beat detection using librosa
 - Adaptive tempo sync for accurate playback alignment
+- **AI-powered bass isolation** (optional): Better sync for songs with ambient intros
 - Interactive CLI interface with beautiful terminal UI
 - Extract, modify, and repackage Guitar Pro files safely
 
@@ -63,6 +64,24 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+### Optional: Bass Isolation
+
+For songs with ambient intros or complex arrangements, bass isolation uses AI to detect where the bass actually starts, improving sync accuracy:
+
+```bash
+pip install "guitarprotool[bass-isolation]"
+
+# Or for local development:
+pip install -e ".[bass-isolation]"
+```
+
+This installs PyTorch and Demucs (~2GB). Requires:
+- ~4GB disk space
+- GPU recommended (CUDA) but works on CPU
+- First run downloads the model (~1.5GB)
+
+When installed, bass isolation runs automatically during audio processing.
+
 ## Usage
 
 ### Interactive CLI
@@ -101,6 +120,14 @@ The tool creates a new file: `[original]_with_audio.gp` containing:
 5. **Inject**: Modifies score.gpif XML to add AudioTrack element
 6. **Repackage**: Creates new .gp file with audio and sync points
 
+### Capturing Full Output
+
+To capture all terminal output (including progress bars) to a file:
+
+```bash
+guitarprotool --test-mode 2>&1 | tee full_output.txt
+```
+
 ## Tech Stack
 
 - **yt-dlp**: YouTube audio download
@@ -110,6 +137,7 @@ The tool creates a new file: `[original]_with_audio.gp` containing:
 - **rich**: Beautiful terminal UI
 - **questionary**: Interactive prompts
 - **loguru**: Logging
+- **Demucs** (optional): AI-powered bass isolation for improved sync
 
 ## Development
 
