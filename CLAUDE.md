@@ -533,7 +533,7 @@ Compares sync points between generated and reference GP files:
 
 **Default tolerances:**
 - Frame offset: 4410 samples (~100ms)
-- Tempo: 1.0 BPM
+- Tempo: 1.5 BPM
 
 ### Session Logging
 

@@ -105,7 +105,7 @@ EXTRA BARS (in generated, not in reference):
    ...
 
 ------------------------------------------------------------
-Tolerances: FrameOffset=4410 samples (100.0ms), Tempo=1.0 BPM
+Tolerances: FrameOffset=4410 samples (100.0ms), Tempo=1.5 BPM
 ```
 
 ### What's Acceptable?
@@ -210,7 +210,7 @@ Default tolerances in `sync_comparator.py`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `DEFAULT_FRAME_TOLERANCE` | 4410 samples (~100ms) | Maximum allowed frame offset difference |
-| `DEFAULT_TEMPO_TOLERANCE` | 1.0 BPM | Maximum allowed tempo difference |
+| `DEFAULT_TEMPO_TOLERANCE` | 1.5 BPM | Maximum allowed tempo difference |
 
 If defaults are too strict or loose, adjust these values when creating the comparator:
 
