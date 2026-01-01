@@ -104,6 +104,39 @@ Follow the interactive prompts to:
 3. Review detected BPM (option to override)
 4. Process and generate output file (always saved as .gp)
 
+### Command Line (Non-Interactive)
+
+For scripting or batch processing, use command line arguments:
+
+```bash
+# Basic usage with YouTube URL
+guitarprotool -i song.gp -y "https://youtube.com/watch?v=..." -o output.gp
+
+# With local audio file
+guitarprotool -i song.gp --local-audio backing.mp3 -o output.gp
+
+# Compare output to a reference file (for testing sync accuracy)
+guitarprotool -i song.gp -y "URL" -o output.gp --compare reference.gp
+
+# Custom track name
+guitarprotool -i song.gp -y "URL" -o output.gp -n "Backing Track"
+```
+
+**Available arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `-i, --input FILE` | Input GP/GPX file path (required) |
+| `-y, --youtube-url URL` | YouTube URL for audio |
+| `--local-audio FILE` | Local audio file path |
+| `-o, --output FILE` | Output GP file path (required) |
+| `-n, --track-name` | Track name in Guitar Pro (default: "Audio Track") |
+| `--compare FILE` | Compare output sync points to reference file |
+| `--test-mode` | Run all test cases from `tests/fixtures/` |
+| `--quiet` | Suppress non-essential output |
+
+**Note:** Either `--youtube-url` or `--local-audio` must be provided.
+
 ### Output
 
 The tool creates a new file: `[original]_with_audio.gp` containing:
