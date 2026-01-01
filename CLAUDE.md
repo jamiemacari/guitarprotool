@@ -436,6 +436,62 @@ Frame offsets and FramePadding work together to align audio with the tab:
 
 See `docs/ADAPTIVE_TEMPO_SYNC_PLAN.md` for original implementation plan.
 
+## Music Theory Review (Dec 2024)
+
+A comprehensive music theory review was conducted on the beat detection, sync point generation, and drift analysis code. The implementation is **generally sound** but identified several issues affecting sync accuracy.
+
+### HIGH PRIORITY - Main Causes of Sync Issues
+
+**1. Sync Points Only at Bar Starts**
+- Current: All sync points have `position=0` (bar start only)
+- Problem: GP8's XML schema supports mid-bar sync points, but we don't use them
+- Impact: Syncopated music, off-beat accents, and songs with strong backbeat emphasis may not align well
+- Location: `xml_modifier.py` line 42 hardcodes `position: int = 0`
+- Fix needed: Calculate sub-bar position based on where beats actually fall relative to bar boundaries
+
+**2. Bass = First Beat Assumption**
+- Current: Bass isolation finds where bass enters, assumes that's beat 1
+- Problem: Not all music has bass on beat 1:
+  - **Reggae/dub**: Bass often enters on beat 3 or "and" of beat 2
+  - **Jazz**: Walking bass may start mid-phrase
+  - **Electronic**: Bass drops are often delayed for effect
+- Impact: If bass starts later than the actual musical downbeat, alignment is shifted incorrectly
+- Location: `main.py` lines 579-655 (hybrid bass isolation approach)
+- Fix needed: Consider using drums/percussion onset detection as alternative, or allow manual override
+
+### MEDIUM PRIORITY
+
+**3. Half-Time Detection Asymmetry**
+- Double-time tolerance: ±30% (ratio ~2.0)
+- Half-time tolerance: ±7.5% (ratio ~0.5)
+- Impact: Half-time feels may not be detected correctly, especially for songs explicitly in half-time
+- Location: `beat_detector.py` lines 595-610
+- Note: Impact unclear - may not be causing real-world issues
+
+### DEFERRED - Not Currently Needed
+
+**4. Time Signature Support** (deferred)
+- Current: Hardcoded `beats_per_bar=4` throughout
+- Would break for 3/4, 6/8, 5/4, 7/8 time signatures
+- No user reports of issues with odd time signatures yet
+- Can read time signature from `score.gpif` when needed
+
+**5. Tempo Change Handling** (deferred)
+- Current: Multiple tempo sections treated as "drift"
+- Would need to read tempo automations from GP file
+- No user reports of songs with actual tempo changes yet
+
+### Review Details
+
+| Area | Assessment |
+|------|------------|
+| BPM calculation (`60/median_interval`) | Correct |
+| 16-beat sync interval (4 bars in 4/4) | Musically sensible |
+| Drift thresholds (0.5% tight) | Match perceptual research |
+| First beat false onset detection (60% threshold) | Clever and correct |
+| Frame offset calculation | Mathematically correct |
+| Bass isolation hybrid approach | Generally intelligent |
+
 ## Testing Artifacts - Run Folder
 
 **Status:** ✅ Implemented (PR #11)
