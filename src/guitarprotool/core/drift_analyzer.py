@@ -404,18 +404,19 @@ class DriftAnalyzer:
         bars_from_start = bar - self.tab_start_bar
         expected_time = bars_from_start * self.expected_bar_duration
 
+        # Track note offset within bar (for notation-guided alignment)
+        note_offset_in_bar = 0.0
+
         # Try notation-guided alignment first (handles syncopation/weak beats)
         if self.notation_map is not None:
-            beat_idx = self._find_beat_for_bar_with_notation(bar)
-            if beat_idx is not None:
-                # Notation-guided alignment found a match
-                pass
-            elif self.tab_start_bar > 0:
-                # Fall back to nearest-beat matching
-                beat_idx = self._find_nearest_beat_to_expected(bars_from_start)
-            else:
-                # Fall back to direct indexing
-                beat_idx = bars_from_start * self.beats_per_bar
+            beat_idx, note_offset_in_bar = self._find_beat_for_bar_with_notation(bar)
+            if beat_idx is None:
+                if self.tab_start_bar > 0:
+                    # Fall back to nearest-beat matching
+                    beat_idx = self._find_nearest_beat_to_expected(bars_from_start)
+                else:
+                    # Fall back to direct indexing
+                    beat_idx = bars_from_start * self.beats_per_bar
         elif self.tab_start_bar > 0:
             # For tabs with intro bars, use nearest-beat matching
             # This handles alignment when first detected beat is at tab_start_bar
@@ -429,7 +430,8 @@ class DriftAnalyzer:
             return None
 
         # Actual time relative to first beat
-        actual_time = self.beat_times[beat_idx] - self.first_beat_time
+        # When using notation-guided alignment, subtract the note offset to get bar START time
+        actual_time = self.beat_times[beat_idx] - self.first_beat_time - note_offset_in_bar
 
         # Calculate local tempo at this position
         local_tempo = self.calculate_local_tempo_at_bar(bar)
@@ -640,7 +642,7 @@ class DriftAnalyzer:
         output_path.write_text("\n".join(lines))
         logger.info(f"Debug beat data written to: {output_path}")
 
-    def _find_beat_for_bar_with_notation(self, bar: int) -> Optional[int]:
+    def _find_beat_for_bar_with_notation(self, bar: int) -> tuple[Optional[int], float]:
         """Find the beat index for a bar using notation-guided alignment.
 
         When the notation shows that a bar starts with a rest followed by a note
@@ -652,33 +654,39 @@ class DriftAnalyzer:
             bar: Bar number (0-indexed)
 
         Returns:
-            Index into beat_times of the best matching beat, or None if no match
+            Tuple of (beat_index, note_offset_seconds):
+            - beat_index: Index into beat_times of the best matching beat, or None if no match
+            - note_offset_seconds: Time offset from bar start to first note (in seconds)
+              This should be subtracted from the beat time to get the bar start time.
         """
         if self.notation_map is None:
-            return None
+            return None, 0.0
 
         bar_notation = self.notation_map.get_bar(bar)
         if bar_notation is None:
-            return None
+            return None, 0.0
 
         # If bar has no notes, fall back to simple indexing
         if not bar_notation.has_notes or bar_notation.first_onset is None:
             bars_from_start = bar - self.tab_start_bar
             if bars_from_start < 0:
-                return None
-            return bars_from_start * self.beats_per_bar
+                return None, 0.0
+            return bars_from_start * self.beats_per_bar, 0.0
 
         # Get the first note position within this bar (in beats)
         first_note_beat = bar_notation.first_onset
+
+        # Convert note offset from beats to seconds
+        note_offset_seconds = first_note_beat * self.expected_beat_interval
 
         # Calculate expected time for this note position
         # Time = (bars from start * bar duration) + (note position * beat duration)
         bars_from_start = bar - self.tab_start_bar
         if bars_from_start < 0:
-            return None
+            return None, 0.0
 
         bar_start_time = self.first_beat_time + (bars_from_start * self.expected_bar_duration)
-        note_time = bar_start_time + (first_note_beat * self.expected_beat_interval)
+        note_time = bar_start_time + note_offset_seconds
 
         # Find the audio beat closest to this expected note time
         min_diff = float('inf')
@@ -698,12 +706,13 @@ class DriftAnalyzer:
         # Log if we found a significant offset from beat 1
         if first_note_beat > 0.5 and best_beat_idx is not None:
             logger.debug(
-                f"Bar {bar}: first note at beat {first_note_beat:.1f}, "
+                f"Bar {bar}: first note at beat {first_note_beat:.1f} "
+                f"(offset {note_offset_seconds:.3f}s), "
                 f"matched to audio beat {best_beat_idx} "
                 f"(diff: {min_diff*1000:.1f}ms)"
             )
 
-        return best_beat_idx
+        return best_beat_idx, note_offset_seconds
 
     def _find_nearest_beat_to_expected(self, bars_from_start: int) -> Optional[int]:
         """Find the beat index nearest to the expected bar position.
@@ -834,15 +843,16 @@ class DriftAnalyzer:
         """
         # Try notation-guided alignment first
         if self.notation_map is not None:
-            beat_idx = self._find_beat_for_bar_with_notation(bar)
+            beat_idx, note_offset_seconds = self._find_beat_for_bar_with_notation(bar)
             if beat_idx is not None:
+                # Subtract note offset to get BAR start time (not note time)
                 if self.tab_start_bar > 0:
-                    # Use absolute audio position
-                    absolute_time = self.beat_times[beat_idx]
+                    # Use absolute audio position for bar start
+                    absolute_time = self.beat_times[beat_idx] - note_offset_seconds
                     return int(absolute_time * self.sample_rate)
                 else:
                     # Use relative position (bar 0 = 0)
-                    relative_time = self.beat_times[beat_idx] - self.first_beat_time
+                    relative_time = self.beat_times[beat_idx] - self.first_beat_time - note_offset_seconds
                     return int(relative_time * self.sample_rate)
 
         if self.tab_start_bar > 0:
