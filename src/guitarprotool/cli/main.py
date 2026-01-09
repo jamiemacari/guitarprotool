@@ -34,6 +34,7 @@ from guitarprotool.core.format_handler import (
 )
 from guitarprotool.core.beat_detector import BeatDetector, BeatInfo, SyncResult
 from guitarprotool.core.drift_analyzer import DriftAnalyzer, DriftReport, DriftSeverity
+from guitarprotool.core.notation_parser import NotationParser, NotationMap
 from guitarprotool.core.xml_modifier import (
     XMLModifier,
     SyncPoint,
@@ -958,6 +959,20 @@ def run_pipeline():
 
             console.print()
 
+            # Parse notation from GP file for notation-guided alignment
+            notation_map: Optional[NotationMap] = None
+            try:
+                notation_parser = NotationParser(gpif_path)
+                notation_map = notation_parser.parse(track_id=0)
+                bars_with_notes = sum(1 for b in notation_map.bars if b.has_notes)
+                console.print(
+                    f"[green]Notation parsed:[/green] {notation_map.total_bars} bars, "
+                    f"{bars_with_notes} with notes"
+                )
+            except Exception as e:
+                logger.warning(f"Notation parsing failed: {e}")
+                console.print("[yellow]Warning:[/yellow] Notation parsing skipped (using audio-only alignment)")
+
             # Restart progress for remaining tasks
             with Progress(
                 SpinnerColumn(),
@@ -979,6 +994,7 @@ def run_pipeline():
                         original_tempo=original_tempo,
                         beats_per_bar=4,
                         tab_start_bar=tab_start_bar,
+                        notation_map=notation_map,
                     )
                     drift_report = analyzer.analyze(max_bars=max_bars)
                     # Add tempo correction info to report
@@ -1347,6 +1363,22 @@ def run_pipeline_noninteractive(args: argparse.Namespace) -> int:
                     )
                 console.print()
 
+        # Parse notation from GP file for notation-guided alignment
+        notation_map: Optional[NotationMap] = None
+        try:
+            notation_parser = NotationParser(gpif_path)
+            notation_map = notation_parser.parse(track_id=0)
+            bars_with_notes = sum(1 for b in notation_map.bars if b.has_notes)
+            if not args.quiet:
+                console.print(
+                    f"[green]Notation parsed:[/green] {notation_map.total_bars} bars, "
+                    f"{bars_with_notes} with notes"
+                )
+        except Exception as e:
+            logger.warning(f"Notation parsing failed: {e}")
+            if not args.quiet:
+                console.print("[yellow]Warning:[/yellow] Notation parsing skipped (using audio-only alignment)")
+
         # Continue with processing (new progress context)
         with Progress(
             SpinnerColumn(),
@@ -1367,6 +1399,7 @@ def run_pipeline_noninteractive(args: argparse.Namespace) -> int:
                     original_tempo=original_tempo,
                     beats_per_bar=4,
                     tab_start_bar=tab_start_bar,
+                    notation_map=notation_map,
                 )
                 drift_report = analyzer.analyze(max_bars=max_bars)
                 drift_report.tempo_corrected = tempo_corrected

@@ -8,13 +8,16 @@ with tempo variation.
 from dataclasses import dataclass, field
 from enum import Enum
 from statistics import median
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
 from loguru import logger
 
 from guitarprotool.core.beat_detector import SyncPointData
 from guitarprotool.utils.exceptions import DriftAnalysisError, InsufficientBeatsError
+
+if TYPE_CHECKING:
+    from guitarprotool.core.notation_parser import NotationMap
 
 
 class DriftSeverity(Enum):
@@ -248,6 +251,7 @@ class DriftAnalyzer:
         beats_per_bar: int = 4,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         tab_start_bar: int = 0,
+        notation_map: Optional["NotationMap"] = None,
     ):
         """Initialize DriftAnalyzer.
 
@@ -259,6 +263,9 @@ class DriftAnalyzer:
             tab_start_bar: Bar number where notes begin in the tab (0-indexed).
                           This aligns the first detected beat with this bar instead of bar 0.
                           Used when tabs have intro bars before the actual music starts.
+            notation_map: Optional notation map from GP file for notation-guided alignment.
+                         When provided, uses note positions to correctly align beats to bars,
+                         handling syncopation and notes on weak beats.
 
         Raises:
             InsufficientBeatsError: If not enough beats for analysis
@@ -273,6 +280,7 @@ class DriftAnalyzer:
         self.beats_per_bar = beats_per_bar
         self.sample_rate = sample_rate
         self.tab_start_bar = tab_start_bar
+        self.notation_map = notation_map
 
         # Calculate expected beat interval
         self.expected_beat_interval = 60.0 / original_tempo
@@ -284,7 +292,7 @@ class DriftAnalyzer:
         logger.debug(
             f"DriftAnalyzer initialized: tempo={original_tempo}, "
             f"beats={len(beat_times)}, first_beat={self.first_beat_time:.3f}s, "
-            f"tab_start_bar={tab_start_bar}"
+            f"tab_start_bar={tab_start_bar}, notation_map={'yes' if notation_map else 'no'}"
         )
 
     def analyze(self, max_bars: Optional[int] = None) -> DriftReport:
@@ -371,6 +379,9 @@ class DriftAnalyzer:
     def get_drift_at_bar(self, bar: int) -> Optional[BarDriftInfo]:
         """Get drift information for a specific bar.
 
+        When notation_map is available, uses notation-guided alignment to correctly
+        handle bars where notes start on weak beats (e.g., after rests).
+
         When tab_start_bar > 0, adjusts beat index so that bar tab_start_bar
         corresponds to beat 0 (first detected beat), and uses nearest-beat matching
         to find the bar position.
@@ -393,18 +404,29 @@ class DriftAnalyzer:
         bars_from_start = bar - self.tab_start_bar
         expected_time = bars_from_start * self.expected_bar_duration
 
-        if self.tab_start_bar > 0:
+        # Try notation-guided alignment first (handles syncopation/weak beats)
+        if self.notation_map is not None:
+            beat_idx = self._find_beat_for_bar_with_notation(bar)
+            if beat_idx is not None:
+                # Notation-guided alignment found a match
+                pass
+            elif self.tab_start_bar > 0:
+                # Fall back to nearest-beat matching
+                beat_idx = self._find_nearest_beat_to_expected(bars_from_start)
+            else:
+                # Fall back to direct indexing
+                beat_idx = bars_from_start * self.beats_per_bar
+        elif self.tab_start_bar > 0:
             # For tabs with intro bars, use nearest-beat matching
             # This handles alignment when first detected beat is at tab_start_bar
             beat_idx = self._find_nearest_beat_to_expected(bars_from_start)
-            if beat_idx is None:
-                return None
         else:
             # Default: use direct indexing (bar N -> beat N*beats_per_bar)
             # This correctly maps bars to beats even when audio tempo differs from tab
             beat_idx = bars_from_start * self.beats_per_bar
-            if beat_idx >= len(self.beat_times):
-                return None
+
+        if beat_idx is None or beat_idx >= len(self.beat_times):
+            return None
 
         # Actual time relative to first beat
         actual_time = self.beat_times[beat_idx] - self.first_beat_time
@@ -618,6 +640,71 @@ class DriftAnalyzer:
         output_path.write_text("\n".join(lines))
         logger.info(f"Debug beat data written to: {output_path}")
 
+    def _find_beat_for_bar_with_notation(self, bar: int) -> Optional[int]:
+        """Find the beat index for a bar using notation-guided alignment.
+
+        When the notation shows that a bar starts with a rest followed by a note
+        on a weak beat (e.g., beat 3.5), this method correctly identifies which
+        audio beat corresponds to that note position, rather than assuming
+        every audio beat is beat 1 of a bar.
+
+        Args:
+            bar: Bar number (0-indexed)
+
+        Returns:
+            Index into beat_times of the best matching beat, or None if no match
+        """
+        if self.notation_map is None:
+            return None
+
+        bar_notation = self.notation_map.get_bar(bar)
+        if bar_notation is None:
+            return None
+
+        # If bar has no notes, fall back to simple indexing
+        if not bar_notation.has_notes or bar_notation.first_onset is None:
+            bars_from_start = bar - self.tab_start_bar
+            if bars_from_start < 0:
+                return None
+            return bars_from_start * self.beats_per_bar
+
+        # Get the first note position within this bar (in beats)
+        first_note_beat = bar_notation.first_onset
+
+        # Calculate expected time for this note position
+        # Time = (bars from start * bar duration) + (note position * beat duration)
+        bars_from_start = bar - self.tab_start_bar
+        if bars_from_start < 0:
+            return None
+
+        bar_start_time = self.first_beat_time + (bars_from_start * self.expected_bar_duration)
+        note_time = bar_start_time + (first_note_beat * self.expected_beat_interval)
+
+        # Find the audio beat closest to this expected note time
+        min_diff = float('inf')
+        best_beat_idx = None
+
+        # Search in a window around the expected position
+        estimated_beat_idx = int((note_time - self.first_beat_time) / self.expected_beat_interval)
+        search_start = max(0, estimated_beat_idx - self.beats_per_bar * 2)
+        search_end = min(len(self.beat_times), estimated_beat_idx + self.beats_per_bar * 2)
+
+        for i in range(search_start, search_end):
+            diff = abs(self.beat_times[i] - note_time)
+            if diff < min_diff:
+                min_diff = diff
+                best_beat_idx = i
+
+        # Log if we found a significant offset from beat 1
+        if first_note_beat > 0.5 and best_beat_idx is not None:
+            logger.debug(
+                f"Bar {bar}: first note at beat {first_note_beat:.1f}, "
+                f"matched to audio beat {best_beat_idx} "
+                f"(diff: {min_diff*1000:.1f}ms)"
+            )
+
+        return best_beat_idx
+
     def _find_nearest_beat_to_expected(self, bars_from_start: int) -> Optional[int]:
         """Find the beat index nearest to the expected bar position.
 
@@ -724,6 +811,9 @@ class DriftAnalyzer:
     def _calculate_frame_offset_for_bar(self, bar: int) -> int:
         """Calculate audio frame offset for a given bar.
 
+        When notation_map is available, uses notation-guided alignment to correctly
+        handle bars where notes start on weak beats (e.g., after rests).
+
         Uses nearest-beat matching instead of direct indexing to be robust
         to false beat detections that would otherwise shift subsequent bars.
 
@@ -742,6 +832,19 @@ class DriftAnalyzer:
         Returns:
             Frame offset (samples at 44.1kHz)
         """
+        # Try notation-guided alignment first
+        if self.notation_map is not None:
+            beat_idx = self._find_beat_for_bar_with_notation(bar)
+            if beat_idx is not None:
+                if self.tab_start_bar > 0:
+                    # Use absolute audio position
+                    absolute_time = self.beat_times[beat_idx]
+                    return int(absolute_time * self.sample_rate)
+                else:
+                    # Use relative position (bar 0 = 0)
+                    relative_time = self.beat_times[beat_idx] - self.first_beat_time
+                    return int(relative_time * self.sample_rate)
+
         if self.tab_start_bar > 0:
             # For tabs with intro bars, we use ABSOLUTE audio positions
             # GP8 needs to know exactly where in the audio file each bar is

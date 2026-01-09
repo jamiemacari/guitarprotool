@@ -155,6 +155,12 @@ class XMLInjectionError(XMLModificationError):
     pass
 
 
+class NotationParseError(XMLModificationError):
+    """Raised when parsing notation data from GP file fails."""
+
+    pass
+
+
 class ValidationError(GuitarProToolError):
     """Raised for input validation errors."""
 
