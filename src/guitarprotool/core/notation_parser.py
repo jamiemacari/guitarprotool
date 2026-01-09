@@ -157,6 +157,22 @@ class NotationParser:
             logger.warning("No Beats section found in XML")
             return
 
+        # Build a map of note IDs to tie destination status
+        # Tie destination=true means the note is a continuation, not a new attack
+        notes_section = self._root.find("Notes")
+        tie_destinations: set[str] = set()
+        if notes_section is not None:
+            for note in notes_section.findall("Note"):
+                note_id = note.get("id")
+                if note_id is None:
+                    continue
+                tie_elem = note.find("Tie")
+                if tie_elem is not None:
+                    # destination="true" means this note is tied FROM a previous note
+                    # It should not be counted as a new onset
+                    if tie_elem.get("destination") == "true":
+                        tie_destinations.add(note_id)
+
         for beat in beats_section.findall("Beat"):
             beat_id = beat.get("id")
             if beat_id is None:
@@ -167,10 +183,18 @@ class NotationParser:
             rhythm_id = rhythm_elem.get("ref") if rhythm_elem is not None else None
 
             # Check if beat has notes (not a rest)
+            # Exclude notes that are tie destinations (continuations from previous beat)
             notes_elem = beat.find("Notes")
-            has_notes = notes_elem is not None and notes_elem.text and notes_elem.text.strip()
+            has_new_notes = False
+            if notes_elem is not None and notes_elem.text and notes_elem.text.strip():
+                note_ids = notes_elem.text.strip().split()
+                # Check if any note is NOT a tie destination
+                for note_id in note_ids:
+                    if note_id not in tie_destinations:
+                        has_new_notes = True
+                        break
 
-            self._beats[beat_id] = (rhythm_id, has_notes)
+            self._beats[beat_id] = (rhythm_id, has_new_notes)
 
     def _build_voice_map(self) -> None:
         """Build mapping of voice IDs to beat sequences."""
